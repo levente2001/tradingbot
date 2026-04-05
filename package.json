@@ -5,7 +5,7 @@
   "type": "commonjs",
   "main": "functions/index.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "scripts": {
     "check:functions": "node --check functions/index.js",

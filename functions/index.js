@@ -7,7 +7,7 @@ const {
   runTradingCycle,
   setTraderRunning,
   updateTraderConfig
-} = require("../shared/trader-core");
+} = require("./trader-core");
 
 if (!admin.apps.length) {
   admin.initializeApp();
