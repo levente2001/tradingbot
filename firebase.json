@@ -24,6 +24,48 @@
     ],
     "rewrites": [
       {
+        "source": "/activateDemoTrader",
+        "function": {
+          "functionId": "activateDemoTrader",
+          "region": "europe-west1"
+        }
+      },
+      {
+        "source": "/startTrader",
+        "function": {
+          "functionId": "startTrader",
+          "region": "europe-west1"
+        }
+      },
+      {
+        "source": "/stopTrader",
+        "function": {
+          "functionId": "stopTrader",
+          "region": "europe-west1"
+        }
+      },
+      {
+        "source": "/tradingStatus",
+        "function": {
+          "functionId": "tradingStatus",
+          "region": "europe-west1"
+        }
+      },
+      {
+        "source": "/updateTraderConfig",
+        "function": {
+          "functionId": "updateTraderConfig",
+          "region": "europe-west1"
+        }
+      },
+      {
+        "source": "/runTradingLoop",
+        "function": {
+          "functionId": "runTradingLoop",
+          "region": "europe-west1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
