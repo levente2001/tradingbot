@@ -1,0 +1,16 @@
+{
+  "name": "demo-trader-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "worker.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "start": "node worker.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

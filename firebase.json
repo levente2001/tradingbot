@@ -1,0 +1,26 @@
+{
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "default",
+      "ignore": [
+        ".git",
+        ".github",
+        "server",
+        "worker",
+        "hosting",
+        "frontend",
+        ".vscode"
+      ]
+    }
+  ],
+  "hosting": {
+    "public": "hosting",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "cleanUrls": true
+  }
+}

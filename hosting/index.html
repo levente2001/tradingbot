@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="trader-api-base" content="">
+  <title>Demo Trader Control</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(12, 24, 42, 0.92);
+      --panel-2: rgba(18, 34, 58, 0.92);
+      --line: rgba(255, 255, 255, 0.08);
+      --text: #eef4ff;
+      --muted: #9db0cb;
+      --good: #1fd19a;
+      --bad: #ff6b6b;
+      --accent: #49a5ff;
+      --accent-2: #7dd3fc;
+      --shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+      --radius: 22px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(900px 520px at 0% 0%, rgba(73, 165, 255, 0.24), transparent 55%),
+        radial-gradient(800px 500px at 100% 20%, rgba(31, 209, 154, 0.14), transparent 55%),
+        linear-gradient(180deg, #07111f 0%, #091728 100%);
+      padding: 18px;
+    }
+    .app { width: min(100%, 560px); margin: 0 auto; display: grid; gap: 14px; }
+    .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
+    .eyebrow { color: var(--accent-2); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 6px; }
+    h1 { margin: 0; font-size: 28px; line-height: 1.08; }
+    .lead { margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .stat { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 18px; padding: 14px; }
+    .stat-label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    .stat-value { font-family: var(--mono); font-size: 24px; font-weight: 700; }
+    .status-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--muted); font-size: 14px; }
+    .dot { width: 12px; height: 12px; border-radius: 999px; background: #f59e0b; box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.14); flex: 0 0 auto; }
+    .dot.on { background: var(--good); box-shadow: 0 0 0 8px rgba(31, 209, 154, 0.14); }
+    .dot.off { background: var(--bad); box-shadow: 0 0 0 8px rgba(255, 107, 107, 0.14); }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    button { appearance: none; border: 0; border-radius: 18px; padding: 16px 14px; font-size: 16px; font-weight: 700; color: white; cursor: pointer; transition: transform 0.08s ease, opacity 0.18s ease; }
+    button:active { transform: translateY(1px) scale(0.995); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .start { background: linear-gradient(180deg, #1fd19a, #119e74); }
+    .stop { background: linear-gradient(180deg, #ff7b7b, #db4a4a); }
+    .secondary { width: 100%; margin-top: 12px; background: linear-gradient(180deg, #3a7eff, #2557c5); }
+    .log { background: rgba(0, 0, 0, 0.2); border: 1px solid var(--line); border-radius: 18px; padding: 14px; min-height: 92px; font-size: 14px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
+    .meta { margin-top: 12px; display: grid; gap: 8px; font-size: 13px; color: var(--muted); }
+    .meta code { font-family: var(--mono); color: var(--text); }
+    @media (max-width: 480px) {
+      body { padding: 14px; }
+      h1 { font-size: 24px; }
+      .stats { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="card">
+      <div class="eyebrow">Firebase Demo Trader</div>
+      <h1>Mobil vezérlőpanel</h1>
+      <p class="lead">Cloud Run Job futtatja a demo kereskedési ciklust, Firebase Functions adja a vezérlő endpointokat.</p>
+    </section>
+    <section class="card">
+      <div class="stats">
+        <div class="stat"><div class="stat-label">Balance</div><div class="stat-value" id="balance">$10,000.00</div></div>
+        <div class="stat"><div class="stat-label">Aktuális ár</div><div class="stat-value" id="price">--</div></div>
+      </div>
+      <div class="status-row"><div class="dot" id="statusDot"></div><div id="statusText">Állapot betöltése...</div></div>
+    </section>
+    <section class="card">
+      <div class="controls">
+        <button class="start" id="startBtn">Start</button>
+        <button class="stop" id="stopBtn">Stop</button>
+      </div>
+      <button class="secondary" id="refreshBtn">Frissítés</button>
+    </section>
+    <section class="card">
+      <div class="stat-label">Utolsó státusz</div>
+      <div class="log" id="logBox">Nincs még adat.</div>
+      <div class="meta">
+        <div>API base: <code id="apiBaseLabel"></code></div>
+        <div>Win rate: <code id="winRate">0.00%</code></div>
+        <div>Expectancy: <code id="expectancy">0.00</code></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const API_BASE = document.querySelector('meta[name="trader-api-base"]')?.content || "";
+    const els = {
+      balance: document.getElementById("balance"),
+      price: document.getElementById("price"),
+      statusDot: document.getElementById("statusDot"),
+      statusText: document.getElementById("statusText"),
+      logBox: document.getElementById("logBox"),
+      startBtn: document.getElementById("startBtn"),
+      stopBtn: document.getElementById("stopBtn"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      apiBaseLabel: document.getElementById("apiBaseLabel"),
+      winRate: document.getElementById("winRate"),
+      expectancy: document.getElementById("expectancy")
+    };
+    els.apiBaseLabel.textContent = API_BASE || "same-origin";
+    function money(value) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num.toLocaleString("en-US", { style: "currency", currency: "USD" }) : "$0.00";
+    }
+    function fmt(value) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "--";
+    }
+    function setStatus(algoOn, text) {
+      els.statusDot.className = "dot " + (algoOn ? "on" : "off");
+      els.statusText.textContent = text;
+      els.startBtn.disabled = algoOn;
+      els.stopBtn.disabled = !algoOn;
+    }
+    async function api(path, options = {}) {
+      const response = await fetch(API_BASE + path, {
+        headers: { "Content-Type": "application/json" },
+        ...options
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || "API hiba");
+      }
+      return data;
+    }
+    function render(payload) {
+      const state = payload.state || {};
+      const metrics = state.metrics || {};
+      els.balance.textContent = money(state.balance ?? 10000);
+      els.price.textContent = fmt(state.price);
+      els.winRate.textContent = fmt(metrics.winRatePct) + "%";
+      els.expectancy.textContent = fmt(metrics.expectancy);
+      setStatus(Boolean(state.algoOn), state.algoOn ? "Bot fut" : "Bot áll");
+      els.logBox.textContent = (state.lastMessage || "Nincs státusz") + "\nUtolsó tick: " + (state.lastTickAt || "még nem futott");
+    }
+    async function refreshStatus() {
+      try {
+        render(await api("/tradingStatus"));
+      } catch (error) {
+        els.logBox.textContent = error.message;
+        setStatus(false, "Kapcsolati hiba");
+      }
+    }
+    async function toggle(path) {
+      try {
+        await api(path, { method: "POST" });
+        await refreshStatus();
+      } catch (error) {
+        els.logBox.textContent = error.message;
+      }
+    }
+    els.startBtn.addEventListener("click", () => toggle("/startTrader"));
+    els.stopBtn.addEventListener("click", () => toggle("/stopTrader"));
+    els.refreshBtn.addEventListener("click", refreshStatus);
+    refreshStatus();
+    setInterval(refreshStatus, 15000);
+  </script>
+</body>
+</html>
