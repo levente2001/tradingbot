@@ -40,6 +40,18 @@ function defaultConfig() {
     minMarginUsd: 25,
     stopLossPct: 0.45,
     takeProfitRR: 1.35,
+    trendFastBars: 5,
+    trendSlowBars: 13,
+    momentumBars: 3,
+    volatilityBars: 10,
+    maxVolatilityPct: 0.35,
+    minTrendStrengthPct: 0.08,
+    pullbackLookbackBars: 4,
+    pullbackTolerancePct: 0.18,
+    breakEvenTriggerR: 0.7,
+    trailingStopR: 1.1,
+    maxHoldCycles: 18,
+    exitOnTrendFlip: true,
     feeBps: 4,
     slipBps: 2,
     fundingBufferBps: 1,
@@ -149,6 +161,18 @@ function sanitizeConfig(raw = {}) {
     minMarginUsd: Math.max(5, asNumber(raw.minMarginUsd, base.minMarginUsd)),
     stopLossPct: clamp(asNumber(raw.stopLossPct ?? raw.slUsd, base.stopLossPct), 0.05, 5),
     takeProfitRR: clamp(asNumber(raw.takeProfitRR, base.takeProfitRR), 0.5, 5),
+    trendFastBars: clamp(Math.round(asNumber(raw.trendFastBars, base.trendFastBars)), 2, 50),
+    trendSlowBars: clamp(Math.round(asNumber(raw.trendSlowBars, base.trendSlowBars)), 3, 120),
+    momentumBars: clamp(Math.round(asNumber(raw.momentumBars, base.momentumBars)), 1, 24),
+    volatilityBars: clamp(Math.round(asNumber(raw.volatilityBars, base.volatilityBars)), 3, 48),
+    maxVolatilityPct: clamp(asNumber(raw.maxVolatilityPct, base.maxVolatilityPct), 0.05, 5),
+    minTrendStrengthPct: clamp(asNumber(raw.minTrendStrengthPct, base.minTrendStrengthPct), 0.01, 5),
+    pullbackLookbackBars: clamp(Math.round(asNumber(raw.pullbackLookbackBars, base.pullbackLookbackBars)), 2, 24),
+    pullbackTolerancePct: clamp(asNumber(raw.pullbackTolerancePct, base.pullbackTolerancePct), 0.01, 3),
+    breakEvenTriggerR: clamp(asNumber(raw.breakEvenTriggerR, base.breakEvenTriggerR), 0.2, 3),
+    trailingStopR: clamp(asNumber(raw.trailingStopR, base.trailingStopR), 0.5, 5),
+    maxHoldCycles: clamp(Math.round(asNumber(raw.maxHoldCycles, base.maxHoldCycles)), 2, 200),
+    exitOnTrendFlip: normalizeBoolean(raw.exitOnTrendFlip, base.exitOnTrendFlip),
     feeBps: clamp(asNumber(raw.feeBps, base.feeBps), 0, 100),
     slipBps: clamp(asNumber(raw.slipBps, base.slipBps), 0, 100),
     fundingBufferBps: clamp(asNumber(raw.fundingBufferBps, base.fundingBufferBps), 0, 50),
@@ -326,6 +350,99 @@ function rsi(values, period = 6) {
   }
   const rs = losses === 0 ? 999 : (gains / period) / (losses / period);
   return 100 - 100 / (1 + rs);
+}
+
+function priceReturns(points, bars) {
+  const prices = points.map((entry) => asNumber(entry.p));
+  const returns = [];
+  for (let i = Math.max(1, prices.length - bars + 1); i < prices.length; i += 1) {
+    const prev = prices[i - 1];
+    returns.push(prev ? (prices[i] - prev) / prev : 0);
+  }
+  return returns;
+}
+
+function analyzeMarket(points, config) {
+  const minBars = Math.max(
+    14,
+    asNumber(config.trendSlowBars) + 2,
+    asNumber(config.volatilityBars) + 2,
+    asNumber(config.pullbackLookbackBars) + 2,
+    asNumber(config.lookbackBars) + 2
+  );
+  if (points.length < minBars) return null;
+
+  const prices = points.map((entry) => asNumber(entry.p));
+  const current = prices[prices.length - 1];
+  const fastPeriod = Math.min(prices.length, Math.max(2, Math.round(asNumber(config.trendFastBars))));
+  const slowPeriod = Math.min(prices.length, Math.max(fastPeriod + 1, Math.round(asNumber(config.trendSlowBars))));
+  const volatilityPeriod = Math.min(prices.length - 1, Math.max(3, Math.round(asNumber(config.volatilityBars))));
+  const pullbackPeriod = Math.min(prices.length, Math.max(2, Math.round(asNumber(config.pullbackLookbackBars))));
+  const momentumBars = Math.max(1, Math.round(asNumber(config.momentumBars)));
+  const fastEma = ema(prices.slice(-fastPeriod), fastPeriod);
+  const slowEma = ema(prices.slice(-slowPeriod), slowPeriod);
+  const volatilityPct = stdev(priceReturns(points, volatilityPeriod)) * 100;
+  const trendStrengthPct = current && fastEma != null && slowEma != null ? (Math.abs(fastEma - slowEma) / current) * 100 : 0;
+  const momentumPct = getReturnForBars(points, momentumBars) * 100;
+  const longMomentumPct = getReturnForBars(points, Math.max(momentumBars * 2, asNumber(config.lookbackBars))) * 100;
+  const recent = prices.slice(-pullbackPeriod);
+  const low = Math.min(...recent);
+  const high = Math.max(...recent);
+  const rangePos = high - low > 0 ? (current - low) / (high - low) : 0.5;
+  const rsiValue = rsi(prices.slice(-Math.max(7, slowPeriod)), 6);
+  const thresholdPct = costThresholdPct(config);
+  const trendSide = fastEma > slowEma ? "LONG" : "SHORT";
+  const pullbackTolerance = asNumber(config.pullbackTolerancePct);
+  const minTrendStrengthPct = asNumber(config.minTrendStrengthPct);
+  const maxVolatilityPct = asNumber(config.maxVolatilityPct);
+  const isTrendStrong = trendStrengthPct >= minTrendStrengthPct;
+  const isVolatilityOk = volatilityPct > 0 && volatilityPct <= maxVolatilityPct;
+
+  let side = null;
+  let reason = "trend";
+
+  if (isTrendStrong && isVolatilityOk) {
+    const longSetup =
+      trendSide === "LONG" &&
+      momentumPct >= thresholdPct * 0.35 &&
+      longMomentumPct >= thresholdPct &&
+      rangePos <= 0.72 &&
+      rsiValue != null &&
+      rsiValue >= 48 &&
+      rsiValue <= 68;
+
+    const shortSetup =
+      trendSide === "SHORT" &&
+      momentumPct <= -thresholdPct * 0.35 &&
+      longMomentumPct <= -thresholdPct &&
+      rangePos >= 0.28 &&
+      rsiValue != null &&
+      rsiValue <= 52 &&
+      rsiValue >= 32;
+
+    if (longSetup) {
+      side = "LONG";
+      if (rangePos <= 0.45 + pullbackTolerance) reason = "trend-pullback";
+    } else if (shortSetup) {
+      side = "SHORT";
+      if (rangePos >= 0.55 - pullbackTolerance) reason = "trend-pullback";
+    }
+  }
+
+  return {
+    side,
+    reason,
+    thresholdPct,
+    trendSide,
+    trendStrengthPct,
+    volatilityPct,
+    momentumPct,
+    longMomentumPct,
+    rangePos,
+    rsiValue,
+    fastEma,
+    slowEma
+  };
 }
 
 function featureVector(points) {
@@ -546,10 +663,15 @@ function openPosition(state, config, side, reason, nowTs) {
     takeProfit,
     liquidation: calcLiquidationPrice(entry, asNumber(config.leverage), side),
     riskBudget: sizing.riskBudget,
+    initialRiskPerUnit: stopDistance,
     openFee,
     fundingAccrued: 0,
     lastFundingAccrualTs: nowTs,
-    openedAt: nowTs
+    openedAt: nowTs,
+    openedCycle: state.cycleCount,
+    bestPrice: entry,
+    worstPrice: entry,
+    breakEvenArmed: false
   };
   state.lastTradeCycle = state.cycleCount;
   state.lastMessage = `Opened ${side} (${reason})`;
@@ -668,6 +790,45 @@ function maybeManageOpenPosition(state, config, history, nowTs) {
   if (!state.position) return;
   const current = asNumber(state.price);
   const position = state.position;
+  const market = analyzeMarket(state.priceSeries, config);
+  const initialRiskPerUnit = Math.max(asNumber(position.initialRiskPerUnit), 1e-8);
+  const rewardPerUnit = position.side === "LONG" ? current - asNumber(position.entry) : asNumber(position.entry) - current;
+  const rewardR = rewardPerUnit / initialRiskPerUnit;
+
+  position.bestPrice = position.side === "LONG"
+    ? Math.max(asNumber(position.bestPrice, position.entry), current)
+    : Math.min(asNumber(position.bestPrice, position.entry), current);
+  position.worstPrice = position.side === "LONG"
+    ? Math.min(asNumber(position.worstPrice, position.entry), current)
+    : Math.max(asNumber(position.worstPrice, position.entry), current);
+
+  if (!position.breakEvenArmed && rewardR >= asNumber(config.breakEvenTriggerR)) {
+    position.breakEvenArmed = true;
+    const buffer = current * (costThresholdPct(config) / 100) * 0.25;
+    position.stopLoss = position.side === "LONG"
+      ? Math.max(asNumber(position.stopLoss), asNumber(position.entry) + buffer)
+      : Math.min(asNumber(position.stopLoss), asNumber(position.entry) - buffer);
+  }
+
+  if (rewardR >= asNumber(config.trailingStopR)) {
+    const trailDistance = Math.max(initialRiskPerUnit * 0.75, current * (asNumber(config.maxVolatilityPct) / 100) * 0.5);
+    const trailingStop = position.side === "LONG"
+      ? asNumber(position.bestPrice) - trailDistance
+      : asNumber(position.bestPrice) + trailDistance;
+    position.stopLoss = position.side === "LONG"
+      ? Math.max(asNumber(position.stopLoss), trailingStop)
+      : Math.min(asNumber(position.stopLoss), trailingStop);
+  }
+
+  if (config.exitOnTrendFlip && market && market.side && market.side !== position.side && rewardR > 0.15) {
+    closePosition(state, config, history, current, "trend-flip", nowTs);
+    return;
+  }
+
+  if (state.cycleCount - asNumber(position.openedCycle, state.cycleCount) >= asNumber(config.maxHoldCycles) && rewardR > -0.25) {
+    closePosition(state, config, history, current, "time-exit", nowTs);
+    return;
+  }
 
   if (position.side === "LONG" && current <= asNumber(position.liquidation)) {
     liquidate(state, config, history, "price<=liquidation", nowTs);
@@ -697,22 +858,15 @@ function maybeManageOpenPosition(state, config, history, nowTs) {
 function maybeOpenTrade(state, config, nowTs) {
   if (!state.algoOn || !state.onboarded || state.position) return false;
   if (state.cycleCount - asNumber(state.lastTradeCycle, -999999) <= asNumber(config.cooldownCycles)) return false;
-  if (state.priceSeries.length < config.lookbackBars + 1) {
+  const market = analyzeMarket(state.priceSeries, config);
+  if (!market) {
     state.lastMessage = "Warming up price history";
     return false;
   }
 
-  const referenceBar = getBar(state.priceSeries, config.lookbackBars);
-  if (!referenceBar || !referenceBar.p) return false;
-
-  const movePct = ((asNumber(state.price) - asNumber(referenceBar.p)) / asNumber(referenceBar.p)) * 100;
-  const thresholdPct = costThresholdPct(config);
-  let side = null;
-
-  if (movePct <= -thresholdPct) side = "LONG";
-  else if (movePct >= thresholdPct) side = "SHORT";
+  const side = market.side;
   if (!side) {
-    state.lastMessage = `No signal: move ${movePct.toFixed(3)}% < threshold ${thresholdPct.toFixed(3)}%`;
+    state.lastMessage = `No signal: trend ${market.trendStrengthPct.toFixed(3)}% vol ${market.volatilityPct.toFixed(3)}% momentum ${market.momentumPct.toFixed(3)}%`;
     return false;
   }
 
@@ -725,7 +879,157 @@ function maybeOpenTrade(state, config, nowTs) {
     }
   }
 
-  return openPosition(state, config, side, config.useMlFilter ? "algo+ml" : "algo", nowTs);
+  const baseReason = market.reason || "trend";
+  return openPosition(state, config, side, config.useMlFilter ? `${baseReason}+ml` : baseReason, nowTs);
+}
+
+function normalizeBacktestPoint(point, index, config) {
+  const stepMs = Math.max(1, asNumber(config.cycleIntervalMinutes, 5)) * 60 * 1000;
+  const defaultTs = index * stepMs;
+
+  if (typeof point === "number") {
+    return {
+      price: point,
+      fundingRate: 0,
+      nextFundingTs: null,
+      ts: defaultTs
+    };
+  }
+
+  return {
+    price: asNumber(point.price ?? point.p),
+    fundingRate: point.fundingRate == null ? 0 : asNumber(point.fundingRate, 0),
+    nextFundingTs: point.nextFundingTs == null ? null : asNumber(point.nextFundingTs, null),
+    ts: point.ts == null ? defaultTs : asNumber(point.ts, defaultTs)
+  };
+}
+
+function computeBacktestSummary(config, state, history) {
+  const trades = history.trades || [];
+  const recentTrade = trades[0] || null;
+  return {
+    config,
+    metrics: { ...(state.metrics || {}) },
+    tradeCount: trades.length,
+    lastTrade: recentTrade,
+    finalBalance: asNumber(state.balance),
+    netPnl: asNumber(state.balance) - asNumber(config.startBalance),
+    trades: [...trades].reverse()
+  };
+}
+
+function runBacktest({ series = [], config: configOverrides = {}, closeOpenPositionOnEnd = true } = {}) {
+  const config = sanitizeConfig({ ...defaultConfig(), ...configOverrides });
+  const state = defaultState(config);
+  const history = defaultHistory();
+
+  state.onboarded = true;
+  state.algoOn = true;
+  state.balance = asNumber(config.startBalance, 10000);
+  state.metrics = defaultMetrics(state.balance);
+  state.lastMessage = "Backtest initialized";
+
+  for (let i = 0; i < series.length; i += 1) {
+    const point = normalizeBacktestPoint(series[i], i, config);
+    if (!Number.isFinite(point.price) || point.price <= 0) continue;
+
+    state.cycleCount += 1;
+    state.lastTickAt = nowIso(point.ts);
+    state.price = point.price;
+    state.fundingRate = point.fundingRate;
+    state.nextFundingTs = point.nextFundingTs;
+
+    appendPricePoint(state, config, point.price, point.ts);
+    updateMlSignal(state, config, point.ts);
+    applyFundingAccrual(state, config, point.ts);
+    maybeManageOpenPosition(state, config, history, point.ts);
+    if (!state.position) {
+      maybeOpenTrade(state, config, point.ts);
+    }
+    calculateMetrics(history, config, state);
+  }
+
+  if (closeOpenPositionOnEnd && state.position && Number.isFinite(asNumber(state.price, NaN))) {
+    closePosition(
+      state,
+      config,
+      history,
+      asNumber(state.price),
+      "end-of-series",
+      Date.now()
+    );
+    calculateMetrics(history, config, state);
+  }
+
+  return computeBacktestSummary(config, state, history);
+}
+
+function expandSearchSpace(searchSpace = {}) {
+  const entries = Object.entries(searchSpace)
+    .filter(([, values]) => Array.isArray(values) && values.length);
+
+  if (!entries.length) return [{}];
+
+  const variants = [];
+  const walk = (index, current) => {
+    if (index >= entries.length) {
+      variants.push({ ...current });
+      return;
+    }
+
+    const [key, values] = entries[index];
+    for (const value of values) {
+      current[key] = value;
+      walk(index + 1, current);
+    }
+  };
+
+  walk(0, {});
+  return variants;
+}
+
+function scoreBacktestResult(result) {
+  const metrics = result.metrics || {};
+  const tradeCount = asNumber(result.tradeCount, 0);
+  const netPnl = asNumber(metrics.netPnl, result.netPnl);
+  const winRate = asNumber(metrics.winRatePct, 0);
+  const profitFactor = Math.min(5, asNumber(metrics.profitFactor, 0));
+  const maxDrawdownPct = asNumber(metrics.maxDrawdownPct, 0);
+  const expectancy = asNumber(metrics.expectancy, 0);
+  const activityBonus = Math.min(tradeCount, 40) * 0.03;
+
+  return (
+    netPnl +
+    expectancy * 8 +
+    winRate * 0.4 +
+    profitFactor * 12 +
+    activityBonus -
+    maxDrawdownPct * 2.5
+  );
+}
+
+function optimizeBacktest({
+  series = [],
+  baseConfig = {},
+  searchSpace = {},
+  topN = 10
+} = {}) {
+  const variants = expandSearchSpace(searchSpace);
+  const results = variants.map((variant) => {
+    const config = { ...baseConfig, ...variant };
+    const result = runBacktest({ series, config });
+    return {
+      score: scoreBacktestResult(result),
+      config,
+      result
+    };
+  });
+
+  results.sort((a, b) => b.score - a.score);
+  return {
+    tested: results.length,
+    top: results.slice(0, Math.max(1, topN))
+  };
 }
 
 function summarizeRuntime(config, state, history) {
@@ -789,6 +1093,67 @@ async function runTradingCycle({ firestore, collectionPath = DEFAULT_COLLECTION,
   return { ok: true, trigger, ...summarizeRuntime(config, state, history) };
 }
 
+async function activateDemoTrader({ firestore, collectionPath = DEFAULT_COLLECTION, payload = {} }) {
+  const runtime = await loadRuntime({ firestore, collectionPath });
+  const config = sanitizeConfig({ ...runtime.config, ...payload, onboarded: true });
+  const state = sanitizeState(runtime.state, config);
+  const history = sanitizeHistory(runtime.history, config);
+
+  state.onboarded = true;
+  state.nick = String(payload.nick || config.nick || state.nick || "");
+  state.balance = Math.max(0, asNumber(payload.startBalance, config.startBalance));
+  state.algoOn = normalizeBoolean(payload.algoOn, false);
+  state.lastMessage = "Demo trader activated";
+  state.metrics = defaultMetrics(state.balance);
+  history.trades = [];
+
+  await saveRuntime({ refs: runtime.refs, config, state, history });
+  return { ok: true, ...summarizeRuntime(config, state, history) };
+}
+
+async function setTraderRunning({ firestore, collectionPath = DEFAULT_COLLECTION, running }) {
+  const runtime = await loadRuntime({ firestore, collectionPath });
+  const state = sanitizeState(runtime.state, runtime.config);
+  state.algoOn = Boolean(running);
+  state.lastMessage = running ? "Algo started manually" : "Algo stopped manually";
+  await saveRuntime({ refs: runtime.refs, config: runtime.config, state, history: runtime.history });
+  return { ok: true, ...summarizeRuntime(runtime.config, state, runtime.history) };
+}
+
+async function updateTraderConfig({ firestore, collectionPath = DEFAULT_COLLECTION, payload = {} }) {
+  const runtime = await loadRuntime({ firestore, collectionPath });
+  const config = sanitizeConfig({ ...runtime.config, ...payload });
+  const state = sanitizeState(runtime.state, config);
+  const history = sanitizeHistory(runtime.history, config);
+  calculateMetrics(history, config, state);
+  await saveRuntime({ refs: runtime.refs, config, state, history });
+  return { ok: true, ...summarizeRuntime(config, state, history) };
+}
+
+async function getTradingStatus({ firestore, collectionPath = DEFAULT_COLLECTION }) {
+  const runtime = await loadRuntime({ firestore, collectionPath });
+  calculateMetrics(runtime.history, runtime.config, runtime.state);
+  await saveRuntime({
+    refs: runtime.refs,
+    config: runtime.config,
+    state: runtime.state,
+    history: runtime.history
+  });
+  return { ok: true, ...summarizeRuntime(runtime.config, runtime.state, runtime.history) };
+}
+
 module.exports = {
-  runTradingCycle
+  DEFAULT_COLLECTION,
+  defaultConfig,
+  defaultState,
+  runBacktest,
+  optimizeBacktest,
+  sanitizeConfig,
+  sanitizeState,
+  loadRuntime,
+  runTradingCycle,
+  activateDemoTrader,
+  setTraderRunning,
+  updateTraderConfig,
+  getTradingStatus
 };

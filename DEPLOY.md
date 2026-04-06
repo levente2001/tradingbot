@@ -105,6 +105,55 @@ Or deploy only the trader functions:
 firebase deploy --only functions:activateDemoTrader,functions:startTrader,functions:stopTrader,functions:tradingStatus,functions:updateTraderConfig,functions:runTradingLoop
 ```
 
+## D2. Update An Existing Deployment
+
+If Cloud Run Job and Firebase are already running and you only changed the trader logic:
+
+1. Sync the worker copy:
+
+```bash
+npm run sync:worker-core
+```
+
+2. Redeploy the Cloud Run Job:
+
+```bash
+gcloud run jobs deploy JOB_NAME \
+  --source ./worker \
+  --region REGION \
+  --project PROJECT_ID \
+  --task-timeout=600 \
+  --max-retries=1 \
+  --tasks=1 \
+  --memory=512Mi \
+  --cpu=1 \
+  --set-env-vars=TRADER_COLLECTION=demoTrader,GCP_REGION=REGION
+```
+
+3. Redeploy the Firebase functions if `functions/` changed:
+
+```bash
+firebase deploy --only functions
+```
+
+4. If the web panel changed, redeploy hosting too:
+
+```bash
+firebase deploy --only hosting
+```
+
+5. Run one manual job execution to verify the new worker:
+
+```bash
+gcloud run jobs execute JOB_NAME --region REGION --project PROJECT_ID --wait
+```
+
+Important:
+
+- Changes in `shared/trader-core.js` affect local tooling and should be copied into `worker/lib/trader-core.generated.js` before Cloud Run deploy.
+- Changes in `functions/trader-core.js` require `firebase deploy --only functions`.
+- The Cloud Scheduler job usually does not need to be recreated if only the code changed.
+
 ## E. Post-Deploy Verification
 
 ### Manually execute the Cloud Run Job
@@ -198,6 +247,40 @@ gcloud scheduler jobs create http SCHEDULER_JOB_NAME \
 - The first scheduled runs will warm up price history before signals become eligible.
 - Because the scheduler is every 5 minutes, features and lookbacks are bar-based rather than second-based.
 - `runTradingLoop` exists only as an admin/manual fallback. The normal production path is Cloud Scheduler -> Cloud Run Job.
+
+## Backtest And Optimization
+
+Run a single backtest from JSON or CSV price data:
+
+```bash
+npm run backtest -- --data ./data/prices.json
+```
+
+By default the CLI runs with `useMlFilter=false` unless you explicitly set it in `--config` or with `--set-useMlFilter`.
+
+Run with config overrides:
+
+```bash
+npm run backtest -- --data ./data/prices.json --set-thresholdPct 0.1 --set-stopLossPct 0.4 --set-useMlFilter false
+```
+
+Run grid-search optimization:
+
+```bash
+npm run backtest -- --data ./data/prices.json --optimize --top 5
+```
+
+Use your own search space:
+
+```bash
+npm run backtest -- --data ./data/prices.json --optimize --search ./search-space.json --top 10
+```
+
+Accepted data formats:
+
+- JSON array of numbers: `[100, 101, 102]`
+- JSON array of objects: `[{ "price": 100, "fundingRate": 0.0001, "ts": 1710000000000 }]`
+- CSV with header: `price,fundingRate,ts`
 
 ## Remaining TODOs
 

@@ -8,7 +8,9 @@
     "node": "22"
   },
   "scripts": {
+    "backtest": "node scripts/backtest.js",
     "check:functions": "node --check functions/index.js",
+    "sync:worker-core": "cp shared/trader-core.js worker/lib/trader-core.generated.js",
     "deploy:functions": "firebase deploy --only functions",
     "deploy:hosting": "firebase deploy --only hosting"
   },
