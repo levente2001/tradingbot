@@ -31,32 +31,32 @@ function defaultConfig() {
     symbol: "BTCUSDT",
     cycleIntervalMinutes: 5,
     lookbackBars: 6,
-    thresholdPct: 0.12,
-    thresholdCostMultiplier: 1.15,
-    cooldownCycles: 1,
+    thresholdPct: 0.08,
+    thresholdCostMultiplier: 1,
+    cooldownCycles: 0,
     leverage: 8,
     riskPerTradePct: 0.75,
     maxMarginPct: 20,
     minMarginUsd: 25,
     stopLossPct: 0.45,
-    takeProfitRR: 1.35,
-    trendFastBars: 5,
-    trendSlowBars: 13,
-    momentumBars: 3,
-    volatilityBars: 10,
-    maxVolatilityPct: 0.35,
-    minTrendStrengthPct: 0.08,
+    takeProfitRR: 1.6,
+    trendFastBars: 4,
+    trendSlowBars: 11,
+    momentumBars: 2,
+    volatilityBars: 8,
+    maxVolatilityPct: 0.55,
+    minTrendStrengthPct: 0.05,
     pullbackLookbackBars: 4,
-    pullbackTolerancePct: 0.18,
-    breakEvenTriggerR: 0.7,
-    trailingStopR: 1.1,
-    maxHoldCycles: 18,
+    pullbackTolerancePct: 0.28,
+    breakEvenTriggerR: 0.9,
+    trailingStopR: 1.45,
+    maxHoldCycles: 30,
     exitOnTrendFlip: true,
     feeBps: 4,
     slipBps: 2,
     fundingBufferBps: 1,
     useMlFilter: true,
-    mlMinConfPct: 60,
+    mlMinConfPct: 56,
     onboarded: false,
     nick: "",
     startBalance: 10000,
@@ -395,37 +395,63 @@ function analyzeMarket(points, config) {
   const pullbackTolerance = asNumber(config.pullbackTolerancePct);
   const minTrendStrengthPct = asNumber(config.minTrendStrengthPct);
   const maxVolatilityPct = asNumber(config.maxVolatilityPct);
+  const adaptiveVolatilityPct = maxVolatilityPct + Math.min(trendStrengthPct * 0.9, maxVolatilityPct * 0.9);
   const isTrendStrong = trendStrengthPct >= minTrendStrengthPct;
-  const isVolatilityOk = volatilityPct > 0 && volatilityPct <= maxVolatilityPct;
+  const isVolatilityOk = volatilityPct > 0 && volatilityPct <= adaptiveVolatilityPct;
+  const pullbackMomentumPct = Math.max(thresholdPct * 0.22, thresholdPct - trendStrengthPct * 0.4);
+  const continuationMomentumPct = Math.max(thresholdPct * 0.55, thresholdPct - trendStrengthPct * 0.2);
+  const longTrendMomentumPct = thresholdPct * 0.75;
+  const shortTrendMomentumPct = -longTrendMomentumPct;
+  const continuationTrendStrengthPct = Math.max(minTrendStrengthPct * 1.35, minTrendStrengthPct + 0.02);
 
   let side = null;
   let reason = "trend";
 
   if (isTrendStrong && isVolatilityOk) {
-    const longSetup =
+    const longPullbackSetup =
       trendSide === "LONG" &&
-      momentumPct >= thresholdPct * 0.35 &&
-      longMomentumPct >= thresholdPct &&
-      rangePos <= 0.72 &&
+      momentumPct >= pullbackMomentumPct &&
+      longMomentumPct >= longTrendMomentumPct &&
+      rangePos <= 0.88 &&
       rsiValue != null &&
-      rsiValue >= 48 &&
-      rsiValue <= 68;
+      rsiValue >= 40 &&
+      rsiValue <= 82;
 
-    const shortSetup =
+    const longContinuationSetup =
+      trendSide === "LONG" &&
+      trendStrengthPct >= continuationTrendStrengthPct &&
+      momentumPct >= continuationMomentumPct &&
+      longMomentumPct >= thresholdPct * 0.9 &&
+      rangePos <= 1 &&
+      rsiValue != null &&
+      rsiValue >= 46 &&
+      rsiValue <= 92;
+
+    const shortPullbackSetup =
       trendSide === "SHORT" &&
-      momentumPct <= -thresholdPct * 0.35 &&
-      longMomentumPct <= -thresholdPct &&
-      rangePos >= 0.28 &&
+      momentumPct <= -pullbackMomentumPct &&
+      longMomentumPct <= shortTrendMomentumPct &&
+      rangePos >= 0.12 &&
       rsiValue != null &&
-      rsiValue <= 52 &&
-      rsiValue >= 32;
+      rsiValue <= 60 &&
+      rsiValue >= 18;
 
-    if (longSetup) {
+    const shortContinuationSetup =
+      trendSide === "SHORT" &&
+      trendStrengthPct >= continuationTrendStrengthPct &&
+      momentumPct <= -continuationMomentumPct &&
+      longMomentumPct <= -(thresholdPct * 0.9) &&
+      rangePos >= 0 &&
+      rsiValue != null &&
+      rsiValue <= 54 &&
+      rsiValue >= 8;
+
+    if (longPullbackSetup || longContinuationSetup) {
       side = "LONG";
-      if (rangePos <= 0.45 + pullbackTolerance) reason = "trend-pullback";
-    } else if (shortSetup) {
+      reason = longContinuationSetup && rangePos > 0.45 + pullbackTolerance ? "trend-continuation" : "trend-pullback";
+    } else if (shortPullbackSetup || shortContinuationSetup) {
       side = "SHORT";
-      if (rangePos >= 0.55 - pullbackTolerance) reason = "trend-pullback";
+      reason = shortContinuationSetup && rangePos < 0.55 - pullbackTolerance ? "trend-continuation" : "trend-pullback";
     }
   }
 

@@ -154,6 +154,41 @@ Important:
 - Changes in `functions/trader-core.js` require `firebase deploy --only functions`.
 - The Cloud Scheduler job usually does not need to be recreated if only the code changed.
 
+## D3. Update Live Strategy Config Without Redeploy
+
+If the code is already deployed and you only want to make the live trader more active, you can update the Firestore-backed runtime config through the HTTPS function instead of redeploying everything.
+
+Example:
+
+```bash
+curl -X POST "FUNCTION_URL_FOR_updateTraderConfig" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "thresholdPct": 0.08,
+    "thresholdCostMultiplier": 1,
+    "cooldownCycles": 0,
+    "trendFastBars": 4,
+    "trendSlowBars": 11,
+    "momentumBars": 2,
+    "volatilityBars": 8,
+    "maxVolatilityPct": 0.55,
+    "minTrendStrengthPct": 0.05,
+    "pullbackTolerancePct": 0.28,
+    "takeProfitRR": 1.6,
+    "breakEvenTriggerR": 0.9,
+    "trailingStopR": 1.45,
+    "maxHoldCycles": 30,
+    "mlMinConfPct": 56
+  }'
+```
+
+Notes:
+
+- This changes the live `config` document immediately.
+- Existing position state is preserved.
+- If you want the current open trade to continue under the old logic, stop the algo first, wait for the position to close, then update config and start it again.
+- If you also changed the source code, redeploy first, then update the runtime config.
+
 ## E. Post-Deploy Verification
 
 ### Manually execute the Cloud Run Job
