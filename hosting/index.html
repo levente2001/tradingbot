@@ -8,17 +8,19 @@
   <style>
     :root {
       --bg: #07111f;
-      --panel: rgba(12, 24, 42, 0.92);
-      --panel-2: rgba(18, 34, 58, 0.92);
-      --line: rgba(255, 255, 255, 0.08);
+      --panel: rgba(12, 24, 42, 0.94);
+      --panel-2: rgba(18, 34, 58, 0.94);
+      --field: rgba(255, 255, 255, 0.045);
+      --line: rgba(255, 255, 255, 0.09);
       --text: #eef4ff;
       --muted: #9db0cb;
       --good: #1fd19a;
       --bad: #ff6b6b;
+      --warn: #facc15;
       --accent: #49a5ff;
       --accent-2: #7dd3fc;
       --shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
-      --radius: 22px;
+      --radius: 18px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       --sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
     }
@@ -29,39 +31,62 @@
       font-family: var(--sans);
       color: var(--text);
       background:
-        radial-gradient(900px 520px at 0% 0%, rgba(73, 165, 255, 0.24), transparent 55%),
-        radial-gradient(800px 500px at 100% 20%, rgba(31, 209, 154, 0.14), transparent 55%),
-        linear-gradient(180deg, #07111f 0%, #091728 100%);
+        radial-gradient(900px 520px at 0% 0%, rgba(73, 165, 255, 0.22), transparent 55%),
+        radial-gradient(800px 500px at 100% 20%, rgba(31, 209, 154, 0.12), transparent 55%),
+        linear-gradient(180deg, var(--bg) 0%, #091728 100%);
       padding: 18px;
     }
-    .app { width: min(100%, 560px); margin: 0 auto; display: grid; gap: 14px; }
-    .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
+    .app { width: min(100%, 620px); margin: 0 auto; display: grid; gap: 14px; }
+    .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
     .eyebrow { color: var(--accent-2); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 6px; }
-    h1 { margin: 0; font-size: 28px; line-height: 1.08; }
-    .lead { margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
-    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-    .stat { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 18px; padding: 14px; }
-    .stat-label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-    .stat-value { font-family: var(--mono); font-size: 24px; font-weight: 700; }
+    h1 { margin: 0; font-size: 26px; line-height: 1.08; }
+    h2 { margin: 0 0 12px; font-size: 17px; }
+    .lead, .warning { margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .warning { color: #ffe58a; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .kv, .stat, .trade, .reject-row { background: var(--field); border: 1px solid var(--line); border-radius: 14px; padding: 11px; min-width: 0; }
+    .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .value { font-family: var(--mono); font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+    .stat .value { font-size: 20px; }
     .status-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--muted); font-size: 14px; }
     .dot { width: 12px; height: 12px; border-radius: 999px; background: #f59e0b; box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.14); flex: 0 0 auto; }
     .dot.on { background: var(--good); box-shadow: 0 0 0 8px rgba(31, 209, 154, 0.14); }
     .dot.off { background: var(--bad); box-shadow: 0 0 0 8px rgba(255, 107, 107, 0.14); }
-    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    button { appearance: none; border: 0; border-radius: 18px; padding: 16px 14px; font-size: 16px; font-weight: 700; color: white; cursor: pointer; transition: transform 0.08s ease, opacity 0.18s ease; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    button { appearance: none; border: 0; border-radius: 15px; padding: 14px 12px; font-size: 15px; font-weight: 800; color: white; cursor: pointer; transition: transform 0.08s ease, opacity 0.18s ease; }
     button:active { transform: translateY(1px) scale(0.995); }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
     .start { background: linear-gradient(180deg, #1fd19a, #119e74); }
     .stop { background: linear-gradient(180deg, #ff7b7b, #db4a4a); }
-    .secondary { width: 100%; margin-top: 12px; background: linear-gradient(180deg, #3a7eff, #2557c5); }
-    .log { background: rgba(0, 0, 0, 0.2); border: 1px solid var(--line); border-radius: 18px; padding: 14px; min-height: 92px; font-size: 14px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
-    .meta { margin-top: 12px; display: grid; gap: 8px; font-size: 13px; color: var(--muted); }
+    .secondary { width: 100%; margin-top: 10px; background: linear-gradient(180deg, #3a7eff, #2557c5); }
+    .save { width: 100%; margin-top: 12px; background: linear-gradient(180deg, #0ea5e9, #0369a1); }
+    .log { background: rgba(0, 0, 0, 0.22); border: 1px solid var(--line); border-radius: 14px; padding: 12px; min-height: 78px; font-size: 13px; line-height: 1.45; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .field { display: grid; gap: 6px; }
+    .field label { color: var(--muted); font-size: 12px; }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.22);
+      color: var(--text);
+      padding: 11px 10px;
+      font: 700 14px var(--mono);
+      min-width: 0;
+    }
+    option { background: #0b1728; color: var(--text); }
+    .section-title { grid-column: 1 / -1; margin: 8px 0 0; color: var(--accent-2); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .hidden { display: none !important; }
+    .trade { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
+    .trade strong { color: var(--text); font-family: var(--mono); }
+    .reject-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .meta { margin-top: 12px; display: grid; gap: 7px; font-size: 13px; color: var(--muted); }
     .meta code { font-family: var(--mono); color: var(--text); }
-    @media (max-width: 480px) {
+    @media (max-width: 520px) {
       body { padding: 14px; }
-      h1 { font-size: 24px; }
-      .stats { grid-template-columns: 1fr; }
-      .controls { grid-template-columns: 1fr; }
+      h1 { font-size: 23px; }
+      .grid, .form-grid, .controls { grid-template-columns: 1fr; }
+      .stat .value { font-size: 19px; }
     }
   </style>
 </head>
@@ -71,14 +96,25 @@
       <div class="eyebrow">Firebase Demo Trader</div>
       <h1>Mobil vezérlőpanel</h1>
       <p class="lead">Cloud Run Job futtatja a demo kereskedési ciklust, Firebase Functions adja a vezérlő endpointokat.</p>
+      <p class="warning">This is demo/paper trading only. No guaranteed profit. Backtests can overfit.</p>
     </section>
+
     <section class="card">
-      <div class="stats">
-        <div class="stat"><div class="stat-label">Balance</div><div class="stat-value" id="balance">$10,000.00</div></div>
-        <div class="stat"><div class="stat-label">Aktuális ár</div><div class="stat-value" id="price">--</div></div>
+      <h2>Strategy</h2>
+      <div class="grid">
+        <div class="kv"><div class="label">Mode</div><div class="value" id="strategyModeView">--</div></div>
+        <div class="kv"><div class="label">Source</div><div class="value" id="sourceView">--</div></div>
+        <div class="kv"><div class="label">Running</div><div class="value" id="runningView">--</div></div>
+        <div class="kv"><div class="label">Last tick</div><div class="value" id="lastTickView">--</div></div>
+      </div>
+      <div class="form-grid" style="margin-top: 12px;">
+        <div class="field"><label for="strategyQuickSelect">strategyMode</label><select id="strategyQuickSelect"><option value="trend">trend</option><option value="pairs">pairs</option></select></div>
+        <div class="field"><label for="sourceQuickSelect">source</label><select id="sourceQuickSelect"><option value="binance_futures">binance_futures</option><option value="binance_spot">binance_spot</option></select></div>
       </div>
       <div class="status-row"><div class="dot" id="statusDot"></div><div id="statusText">Állapot betöltése...</div></div>
+      <div class="log" id="logBox">Nincs még adat.</div>
     </section>
+
     <section class="card">
       <div class="controls">
         <button class="start" id="startBtn">Start</button>
@@ -86,86 +122,409 @@
       </div>
       <button class="secondary" id="refreshBtn">Frissítés</button>
     </section>
+
     <section class="card">
-      <div class="stat-label">Utolsó státusz</div>
-      <div class="log" id="logBox">Nincs még adat.</div>
+      <h2>Config</h2>
+      <form id="configForm" class="form-grid">
+        <div class="section-title">Common</div>
+        <div class="field"><label for="cfg_strategyMode">strategyMode</label><select id="cfg_strategyMode" data-key="strategyMode" data-type="string"><option value="trend">trend</option><option value="pairs">pairs</option></select></div>
+        <div class="field"><label for="cfg_source">source</label><select id="cfg_source" data-key="source" data-type="string"><option value="binance_futures">binance_futures</option><option value="binance_spot">binance_spot</option></select></div>
+        <div class="field"><label for="cfg_useMlFilter">useMlFilter</label><select id="cfg_useMlFilter" data-key="useMlFilter" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field"><label for="cfg_leverage">leverage</label><input id="cfg_leverage" data-key="leverage" data-type="number" inputmode="decimal"></div>
+        <div class="field"><label for="cfg_maxHoldCycles">maxHoldCycles</label><input id="cfg_maxHoldCycles" data-key="maxHoldCycles" data-type="number" inputmode="numeric"></div>
+        <div class="field"><label for="cfg_maxDailyLossPct">maxDailyLossPct</label><input id="cfg_maxDailyLossPct" data-key="maxDailyLossPct" data-type="number" inputmode="decimal"></div>
+        <div class="field"><label for="cfg_maxWeeklyLossPct">maxWeeklyLossPct</label><input id="cfg_maxWeeklyLossPct" data-key="maxWeeklyLossPct" data-type="number" inputmode="decimal"></div>
+        <div class="field"><label for="cfg_maxConsecutiveLosses">maxConsecutiveLosses</label><input id="cfg_maxConsecutiveLosses" data-key="maxConsecutiveLosses" data-type="number" inputmode="numeric"></div>
+        <div class="field"><label for="cfg_pauseAfterDrawdownPct">pauseAfterDrawdownPct</label><input id="cfg_pauseAfterDrawdownPct" data-key="pauseAfterDrawdownPct" data-type="number" inputmode="decimal"></div>
+
+        <div class="section-title trend-field">Trend</div>
+        <div class="field trend-field"><label for="cfg_symbol">symbol</label><input id="cfg_symbol" data-key="symbol" data-type="string"></div>
+        <div class="field trend-field"><label for="cfg_riskPerTradePct">riskPerTradePct</label><input id="cfg_riskPerTradePct" data-key="riskPerTradePct" data-type="number" inputmode="decimal"></div>
+        <div class="field trend-field"><label for="cfg_stopLossPct">stopLossPct</label><input id="cfg_stopLossPct" data-key="stopLossPct" data-type="number" inputmode="decimal"></div>
+        <div class="field trend-field"><label for="cfg_takeProfitRR">takeProfitRR</label><input id="cfg_takeProfitRR" data-key="takeProfitRR" data-type="number" inputmode="decimal"></div>
+        <div class="field trend-field"><label for="cfg_thresholdPct">thresholdPct</label><input id="cfg_thresholdPct" data-key="thresholdPct" data-type="number" inputmode="decimal"></div>
+        <div class="field trend-field"><label for="cfg_trendFastBars">trendFastBars</label><input id="cfg_trendFastBars" data-key="trendFastBars" data-type="number" inputmode="numeric"></div>
+        <div class="field trend-field"><label for="cfg_trendSlowBars">trendSlowBars</label><input id="cfg_trendSlowBars" data-key="trendSlowBars" data-type="number" inputmode="numeric"></div>
+        <div class="field trend-field"><label for="cfg_maxVolatilityPct">maxVolatilityPct</label><input id="cfg_maxVolatilityPct" data-key="maxVolatilityPct" data-type="number" inputmode="decimal"></div>
+
+        <div class="section-title pairs-field">Pairs</div>
+        <div class="field pairs-field"><label for="cfg_baseSymbol">baseSymbol</label><input id="cfg_baseSymbol" data-key="baseSymbol" data-type="string"></div>
+        <div class="field pairs-field"><label for="cfg_quoteSymbol">quoteSymbol</label><input id="cfg_quoteSymbol" data-key="quoteSymbol" data-type="string"></div>
+        <div class="field pairs-field"><label for="cfg_pairLookbackBars">pairLookbackBars</label><input id="cfg_pairLookbackBars" data-key="pairLookbackBars" data-type="number" inputmode="numeric"></div>
+        <div class="field pairs-field"><label for="cfg_pairMinCorrelation">pairMinCorrelation</label><input id="cfg_pairMinCorrelation" data-key="pairMinCorrelation" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairEntryZScore">pairEntryZScore</label><input id="cfg_pairEntryZScore" data-key="pairEntryZScore" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairExitZScore">pairExitZScore</label><input id="cfg_pairExitZScore" data-key="pairExitZScore" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairStopZScore">pairStopZScore</label><input id="cfg_pairStopZScore" data-key="pairStopZScore" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairHedgeMode">pairHedgeMode</label><select id="cfg_pairHedgeMode" data-key="pairHedgeMode" data-type="string"><option value="beta">beta</option><option value="notional">notional</option></select></div>
+        <div class="field pairs-field"><label for="cfg_pairRiskPerTradePct">pairRiskPerTradePct</label><input id="cfg_pairRiskPerTradePct" data-key="pairRiskPerTradePct" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairMaxGrossExposurePct">pairMaxGrossExposurePct</label><input id="cfg_pairMaxGrossExposurePct" data-key="pairMaxGrossExposurePct" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairMinHalfLifeBars">pairMinHalfLifeBars</label><input id="cfg_pairMinHalfLifeBars" data-key="pairMinHalfLifeBars" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairMaxHalfLifeBars">pairMaxHalfLifeBars</label><input id="cfg_pairMaxHalfLifeBars" data-key="pairMaxHalfLifeBars" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairCooldownCycles">pairCooldownCycles</label><input id="cfg_pairCooldownCycles" data-key="pairCooldownCycles" data-type="number" inputmode="numeric"></div>
+      </form>
+      <button class="save" id="saveConfigBtn">Save config</button>
+    </section>
+
+    <section class="card">
+      <h2>Metrics</h2>
+      <div class="grid" id="metricsGrid"></div>
+    </section>
+
+    <section class="card" id="positionCard">
+      <h2 id="positionTitle">Position</h2>
+      <div class="grid" id="positionGrid"></div>
+    </section>
+
+    <section class="card">
+      <h2>Rejected signals</h2>
+      <div id="rejectedBox"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent trades</h2>
+      <div id="tradesBox"></div>
       <div class="meta">
         <div>API base: <code id="apiBaseLabel"></code></div>
-        <div>Win rate: <code id="winRate">0.00%</code></div>
-        <div>Expectancy: <code id="expectancy">0.00</code></div>
       </div>
     </section>
   </main>
+
   <script>
     const API_BASE = document.querySelector('meta[name="trader-api-base"]')?.content || "";
+    let lastPayload = null;
+    let userTouchedMl = false;
+
     const els = {
-      balance: document.getElementById("balance"),
-      price: document.getElementById("price"),
+      strategyModeView: document.getElementById("strategyModeView"),
+      sourceView: document.getElementById("sourceView"),
+      runningView: document.getElementById("runningView"),
+      lastTickView: document.getElementById("lastTickView"),
       statusDot: document.getElementById("statusDot"),
       statusText: document.getElementById("statusText"),
       logBox: document.getElementById("logBox"),
       startBtn: document.getElementById("startBtn"),
       stopBtn: document.getElementById("stopBtn"),
       refreshBtn: document.getElementById("refreshBtn"),
+      saveConfigBtn: document.getElementById("saveConfigBtn"),
       apiBaseLabel: document.getElementById("apiBaseLabel"),
-      winRate: document.getElementById("winRate"),
-      expectancy: document.getElementById("expectancy")
+      configForm: document.getElementById("configForm"),
+      strategySelect: document.getElementById("cfg_strategyMode"),
+      strategyQuickSelect: document.getElementById("strategyQuickSelect"),
+      sourceQuickSelect: document.getElementById("sourceQuickSelect"),
+      mlSelect: document.getElementById("cfg_useMlFilter"),
+      metricsGrid: document.getElementById("metricsGrid"),
+      positionTitle: document.getElementById("positionTitle"),
+      positionGrid: document.getElementById("positionGrid"),
+      rejectedBox: document.getElementById("rejectedBox"),
+      tradesBox: document.getElementById("tradesBox")
     };
+
+    const defaults = {
+      strategyMode: "trend",
+      source: "binance_futures",
+      useMlFilter: false,
+      leverage: 8,
+      maxHoldCycles: 30,
+      maxDailyLossPct: 5,
+      maxWeeklyLossPct: 12,
+      maxConsecutiveLosses: 5,
+      pauseAfterDrawdownPct: 15,
+      symbol: "BTCUSDT",
+      riskPerTradePct: 0.75,
+      stopLossPct: 0.45,
+      takeProfitRR: 1.6,
+      thresholdPct: 0.08,
+      trendFastBars: 4,
+      trendSlowBars: 11,
+      maxVolatilityPct: 0.55,
+      baseSymbol: "BTCUSDT",
+      quoteSymbol: "ETHUSDT",
+      pairLookbackBars: 120,
+      pairMinCorrelation: 0.65,
+      pairEntryZScore: 2,
+      pairExitZScore: 0.4,
+      pairStopZScore: 3.2,
+      pairHedgeMode: "beta",
+      pairRiskPerTradePct: 0.5,
+      pairMaxGrossExposurePct: 30,
+      pairMinHalfLifeBars: 3,
+      pairMaxHalfLifeBars: 80,
+      pairCooldownCycles: 2
+    };
+
     els.apiBaseLabel.textContent = API_BASE || "same-origin";
+
+    function isValid(value) {
+      return value !== undefined && value !== null && !(typeof value === "number" && Number.isNaN(value));
+    }
+
+    function safe(value) {
+      return isValid(value) && value !== "" ? String(value) : "--";
+    }
+
+    function fmt(value, decimals = 2) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : "--";
+    }
+
     function money(value) {
       const num = Number(value);
-      return Number.isFinite(num) ? num.toLocaleString("en-US", { style: "currency", currency: "USD" }) : "$0.00";
+      return Number.isFinite(num) ? num.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }) : "--";
     }
-    function fmt(value) {
+
+    function pct(value) {
       const num = Number(value);
-      return Number.isFinite(num) ? num.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "--";
+      return Number.isFinite(num) ? `${fmt(num, 2)}%` : "--";
     }
+
+    function kv(label, value) {
+      return `<div class="kv"><div class="label">${label}</div><div class="value">${safe(value)}</div></div>`;
+    }
+
     function setStatus(algoOn, text) {
       els.statusDot.className = "dot " + (algoOn ? "on" : "off");
       els.statusText.textContent = text;
       els.startBtn.disabled = algoOn;
       els.stopBtn.disabled = !algoOn;
     }
+
     async function api(path, options = {}) {
       const response = await fetch(API_BASE + path, {
         headers: { "Content-Type": "application/json" },
         ...options
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) {
-        throw new Error(data.error || "API hiba");
+        throw new Error(data.error || `API hiba: ${response.status}`);
       }
       return data;
     }
-    function render(payload) {
-      const state = payload.state || {};
-      const metrics = state.metrics || {};
-      els.balance.textContent = money(state.balance ?? 10000);
-      els.price.textContent = fmt(state.price);
-      els.winRate.textContent = fmt(metrics.winRatePct) + "%";
-      els.expectancy.textContent = fmt(metrics.expectancy);
-      setStatus(Boolean(state.algoOn), state.algoOn ? "Bot fut" : "Bot áll");
-      els.logBox.textContent = (state.lastMessage || "Nincs státusz") + "\nUtolsó tick: " + (state.lastTickAt || "még nem futott");
+
+    function currentMode(payload = lastPayload) {
+      return payload?.config?.strategyMode || payload?.state?.strategyMode || defaults.strategyMode;
     }
-    async function refreshStatus() {
+
+    function updateModeVisibility(mode) {
+      document.querySelectorAll(".trend-field").forEach((el) => el.classList.toggle("hidden", mode !== "trend"));
+      document.querySelectorAll(".pairs-field").forEach((el) => el.classList.toggle("hidden", mode !== "pairs"));
+    }
+
+    function renderStatus(payload) {
+      const state = payload.state || {};
+      const config = payload.config || {};
+      const mode = config.strategyMode || state.strategyMode || defaults.strategyMode;
+      els.strategyModeView.textContent = mode;
+      els.sourceView.textContent = safe(config.source || defaults.source);
+      els.strategyQuickSelect.value = mode;
+      els.sourceQuickSelect.value = config.source || defaults.source;
+      els.runningView.textContent = state.algoOn ? "running" : "stopped";
+      els.lastTickView.textContent = safe(state.lastTickAt);
+      setStatus(Boolean(state.algoOn), state.algoOn ? "Bot fut" : "Bot áll");
+      els.logBox.textContent = `${state.lastMessage || "Nincs státusz"}\nUtolsó tick: ${state.lastTickAt || "--"}`;
+    }
+
+    function setInputValue(input, value) {
+      if (!input) return;
+      if (input.dataset.type === "boolean") input.value = String(Boolean(value));
+      else input.value = isValid(value) ? String(value) : "";
+    }
+
+    function renderConfig(payload) {
+      const config = { ...defaults, ...(payload.config || {}) };
+      const state = payload.state || {};
+      config.strategyMode = config.strategyMode || state.strategyMode || defaults.strategyMode;
+      els.configForm.querySelectorAll("[data-key]").forEach((input) => {
+        setInputValue(input, config[input.dataset.key]);
+      });
+      updateModeVisibility(config.strategyMode);
+      els.strategyQuickSelect.value = config.strategyMode;
+      els.sourceQuickSelect.value = config.source;
+    }
+
+    function collectConfigForm() {
+      const payload = {};
+      els.configForm.querySelectorAll("[data-key]").forEach((input) => {
+        const key = input.dataset.key;
+        const type = input.dataset.type;
+        if (input.value === "") return;
+        if (type === "number") {
+          const num = Number(input.value);
+          if (Number.isFinite(num)) payload[key] = num;
+        } else if (type === "boolean") {
+          payload[key] = input.value === "true";
+        } else {
+          payload[key] = input.value.trim();
+        }
+      });
+      return payload;
+    }
+
+    async function saveConfig() {
       try {
-        render(await api("/tradingStatus"));
+        const payload = collectConfigForm();
+        await api("/updateTraderConfig", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        els.logBox.textContent = "Config mentve. Frissítés...";
+        await refreshStatus();
       } catch (error) {
-        els.logBox.textContent = error.message;
-        setStatus(false, "Kapcsolati hiba");
+        els.logBox.textContent = `Config mentési hiba: ${error.message}`;
       }
     }
+
+    function renderTrendPosition(state, config) {
+      const pos = state.position || {};
+      els.positionTitle.textContent = "Trend status";
+      els.positionGrid.innerHTML = [
+        kv("Symbol", config.symbol || state.symbol || defaults.symbol),
+        kv("Current price", fmt(state.price, 2)),
+        kv("Position side", pos.side),
+        kv("Entry", fmt(pos.entry, 2)),
+        kv("Stop loss", fmt(pos.stopLoss, 2)),
+        kv("Take profit", fmt(pos.takeProfit, 2)),
+        kv("Qty", fmt(pos.qty, 6)),
+        kv("Leverage", pos.leverage || config.leverage),
+        kv("Reason", pos.reason)
+      ].join("");
+    }
+
+    function renderPairsPosition(state, config) {
+      const pos = state.position || {};
+      const pair = state.pair || {};
+      els.positionTitle.textContent = "Pairs status";
+      els.positionGrid.innerHTML = [
+        kv("Base symbol", config.baseSymbol || state.baseSymbol || defaults.baseSymbol),
+        kv("Quote symbol", config.quoteSymbol || state.quoteSymbol || defaults.quoteSymbol),
+        kv("Base price", fmt(state.basePrice, 2)),
+        kv("Quote price", fmt(state.quotePrice, 2)),
+        kv("Z-score", fmt(pair.zScore, 4)),
+        kv("Correlation", fmt(pair.correlation, 4)),
+        kv("Beta", fmt(pair.beta, 4)),
+        kv("Half-life bars", fmt(pair.halfLifeBars, 2)),
+        kv("Rejected reason", pair.rejectedReason),
+        kv("Position type", state.positionType || pos.type),
+        kv("Pair side", pos.side),
+        kv("Base leg", pos.baseSide),
+        kv("Quote leg", pos.quoteSide),
+        kv("Base entry", fmt(pos.baseEntry, 2)),
+        kv("Quote entry", fmt(pos.quoteEntry, 2)),
+        kv("Base qty", fmt(pos.baseQty, 6)),
+        kv("Quote qty", fmt(pos.quoteQty, 6)),
+        kv("Gross exposure", money(pos.grossExposure)),
+        kv("Current z", fmt(pos.currentZScore, 4)),
+        kv("Entry z", fmt(pos.entryZScore, 4)),
+        kv("Stop z", fmt(pos.stopZScore, 4)),
+        kv("Exit z", fmt(pos.exitZScore, 4)),
+        kv("Reason", pos.reason)
+      ].join("");
+    }
+
+    function renderPosition(state, config = {}) {
+      const mode = config.strategyMode || state.strategyMode || defaults.strategyMode;
+      if (mode === "pairs") renderPairsPosition(state, config);
+      else renderTrendPosition(state, config);
+    }
+
+    function renderMetrics(metrics = {}) {
+      els.metricsGrid.innerHTML = [
+        kv("Balance", money(metrics.currentEquity ?? lastPayload?.state?.balance)),
+        kv("Win rate", pct(metrics.winRatePct)),
+        kv("Expectancy", fmt(metrics.expectancy, 4)),
+        kv("Profit factor", fmt(metrics.profitFactor, 3)),
+        kv("Net PnL", money(metrics.netPnl)),
+        kv("Max drawdown", pct(metrics.maxDrawdownPct)),
+        kv("Closed trades", metrics.closedTrades),
+        kv("Wins / losses", `${safe(metrics.wins)} / ${safe(metrics.losses)}`)
+      ].join("");
+    }
+
+    function renderTrades(history = {}) {
+      const trades = Array.isArray(history.trades) ? history.trades.slice(0, 5) : [];
+      if (!trades.length) {
+        els.tradesBox.innerHTML = '<div class="label">No trades yet.</div>';
+        return;
+      }
+      els.tradesBox.innerHTML = trades.map((trade) => {
+        if (trade.type === "PAIR") {
+          return `<div class="trade">
+            <div><strong>PAIR ${safe(trade.side)}</strong> ${safe(trade.baseSymbol)} / ${safe(trade.quoteSymbol)}</div>
+            <div>${safe(trade.baseSide)} / ${safe(trade.quoteSide)} | z ${fmt(trade.entryZScore, 3)} -> ${fmt(trade.exitZScore, 3)}</div>
+            <div>Net: <strong>${money(trade.netPnl)}</strong> | ${safe(trade.reason)}</div>
+          </div>`;
+        }
+        return `<div class="trade">
+          <div><strong>${safe(trade.side)}</strong> ${safe(trade.symbol)}</div>
+          <div>${fmt(trade.entry, 2)} -> ${fmt(trade.exit, 2)}</div>
+          <div>Net: <strong>${money(trade.netPnl)}</strong> | ${safe(trade.reason)}</div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderRejectedSignals(state = {}) {
+      const rejected = state.rejectedSignals || {};
+      const entries = Object.entries(rejected).sort((a, b) => b[1] - a[1]);
+      if (!entries.length) {
+        els.rejectedBox.innerHTML = '<div class="label">No rejected signal counters yet.</div>';
+        return;
+      }
+      els.rejectedBox.innerHTML = entries.map(([reason, count]) => (
+        `<div class="reject-row"><span>${safe(reason)}</span><strong>${safe(count)}</strong></div>`
+      )).join("");
+    }
+
+    function renderAll(payload) {
+      lastPayload = payload;
+      renderStatus(payload);
+      renderConfig(payload);
+      renderMetrics(payload.state?.metrics || {});
+      renderPosition(payload.state || {}, payload.config || {});
+      renderTrades(payload.history || {});
+      renderRejectedSignals(payload.state || {});
+    }
+
+    async function refreshStatus() {
+      try {
+        renderAll(await api("/tradingStatus"));
+      } catch (error) {
+        els.logBox.textContent = `Kapcsolati hiba: ${error.message}`;
+        if (!lastPayload) setStatus(false, "Kapcsolati hiba");
+      }
+    }
+
     async function toggle(path) {
       try {
         await api(path, { method: "POST" });
         await refreshStatus();
       } catch (error) {
-        els.logBox.textContent = error.message;
+        els.logBox.textContent = `API hiba: ${error.message}`;
       }
     }
+
+    els.strategySelect.addEventListener("change", () => {
+      const mode = els.strategySelect.value;
+      els.strategyQuickSelect.value = mode;
+      updateModeVisibility(mode);
+      if (mode === "pairs" && !userTouchedMl) {
+        els.mlSelect.value = "false";
+      }
+    });
+    els.strategyQuickSelect.addEventListener("change", () => {
+      els.strategySelect.value = els.strategyQuickSelect.value;
+      els.strategySelect.dispatchEvent(new Event("change"));
+    });
+    els.sourceQuickSelect.addEventListener("change", () => {
+      document.getElementById("cfg_source").value = els.sourceQuickSelect.value;
+    });
+    els.mlSelect.addEventListener("change", () => {
+      userTouchedMl = true;
+    });
     els.startBtn.addEventListener("click", () => toggle("/startTrader"));
     els.stopBtn.addEventListener("click", () => toggle("/stopTrader"));
     els.refreshBtn.addEventListener("click", refreshStatus);
+    els.saveConfigBtn.addEventListener("click", saveConfig);
+
+    updateModeVisibility(defaults.strategyMode);
     refreshStatus();
     setInterval(refreshStatus, 15000);
   </script>
