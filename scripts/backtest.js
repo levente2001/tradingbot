@@ -44,6 +44,16 @@ function parseCsv(text) {
       row[header] = values[index];
     });
 
+    if (row.basePrice != null || row.quotePrice != null) {
+      return {
+        ts: row.ts == null || row.ts === "" ? undefined : Number(row.ts),
+        basePrice: Number(row.basePrice ?? row.base ?? row.price),
+        quotePrice: Number(row.quotePrice ?? row.quote),
+        fundingRateBase: row.fundingRateBase == null || row.fundingRateBase === "" ? 0 : Number(row.fundingRateBase),
+        fundingRateQuote: row.fundingRateQuote == null || row.fundingRateQuote === "" ? 0 : Number(row.fundingRateQuote)
+      };
+    }
+
     return {
       price: Number(row.price ?? row.p ?? row.close),
       fundingRate: row.fundingRate == null || row.fundingRate === "" ? 0 : Number(row.fundingRate),
@@ -77,13 +87,28 @@ function loadConfig(args) {
     if (!key.startsWith("set-")) continue;
     config[key.slice(4)] = parseScalar(value);
   }
+  if (args.strategy) {
+    config.strategyMode = args.strategy === "pairs" ? "pairs" : "trend";
+  }
 
   return { config, configFileHasUseMlFilter };
 }
 
-function loadSearchSpace(args) {
+function loadSearchSpace(args, strategyMode = "trend") {
   if (args.search) {
     return readJson(path.resolve(args.search));
+  }
+
+  if (strategyMode === "pairs") {
+    // First-pass grid only. Treat results as hypothesis generation and validate with walk-forward/out-of-sample data.
+    return {
+      pairEntryZScore: [1.6, 2.0, 2.4],
+      pairExitZScore: [0.2, 0.4, 0.6],
+      pairStopZScore: [2.8, 3.2, 3.8],
+      pairLookbackBars: [80, 120, 180],
+      pairMinCorrelation: [0.55, 0.65, 0.75],
+      pairRiskPerTradePct: [0.25, 0.5, 0.75]
+    };
   }
 
   return {
@@ -108,7 +133,49 @@ function formatSummary(result) {
     winRatePct: Number((metrics.winRatePct || 0).toFixed(2)),
     expectancy: Number((metrics.expectancy || 0).toFixed(4)),
     profitFactor: Number((metrics.profitFactor || 0).toFixed(3)),
-    maxDrawdownPct: Number((metrics.maxDrawdownPct || 0).toFixed(2))
+    maxDrawdownPct: Number((metrics.maxDrawdownPct || 0).toFixed(2)),
+    avgHoldingCycles: Number((result.avgHoldingCycles || 0).toFixed(2)),
+    pairSignalCount: result.pairSignalCount || 0,
+    rejectedSignals: result.rejectedSignals || {}
+  };
+}
+
+function runWalkForward({ series, baseConfig, args }) {
+  const trainWindow = Math.max(100, Number(args.trainWindow || args["train-window"] || 240));
+  const validationWindow = Math.max(20, Number(args.validationWindow || args["validation-window"] || 80));
+  const topN = Math.max(1, Number(args.top || 1));
+  const windows = [];
+  for (let start = 0; start + trainWindow + validationWindow <= series.length; start += validationWindow) {
+    const train = series.slice(start, start + trainWindow);
+    const validation = series.slice(start + trainWindow, start + trainWindow + validationWindow);
+    const optimized = optimizeBacktest({
+      series: train,
+      baseConfig,
+      searchSpace: loadSearchSpace(args, baseConfig.strategyMode),
+      topN
+    });
+    const best = optimized.top[0];
+    const validationResult = runBacktest({ series: validation, config: best.config });
+    windows.push({
+      trainStart: start,
+      trainEnd: start + trainWindow - 1,
+      validationStart: start + trainWindow,
+      validationEnd: start + trainWindow + validationWindow - 1,
+      trainScore: Number(best.score.toFixed(3)),
+      config: best.config,
+      validation: formatSummary(validationResult)
+    });
+  }
+
+  const aggregateNetPnl = windows.reduce((sum, window) => sum + window.validation.netPnl, 0);
+  const aggregateTrades = windows.reduce((sum, window) => sum + (window.validation.closedTrades || 0), 0);
+  return {
+    windows,
+    aggregate: {
+      windows: windows.length,
+      netPnl: Number(aggregateNetPnl.toFixed(2)),
+      closedTrades: aggregateTrades
+    }
   };
 }
 
@@ -119,14 +186,17 @@ Usage:
   node scripts/backtest.js --data ./data/prices.csv --config ./config.json
   node scripts/backtest.js --data ./data/prices.json --optimize
   node scripts/backtest.js --data ./data/prices.json --optimize --search ./search-space.json --top 5
+  node scripts/backtest.js --data ./data/pair-prices.csv --strategy pairs --walk-forward
 
 Data formats:
   JSON: [100, 101, 102] or [{ "price": 100, "fundingRate": 0.0001, "ts": 1710000000000 }]
   CSV:  price,fundingRate,ts
         100,0.0001,1710000000000
+  Pair JSON: [{ "ts": 1710000000000, "basePrice": 65000, "quotePrice": 3200, "fundingRateBase": 0.0001, "fundingRateQuote": 0.0001 }]
+  Pair CSV:  ts,basePrice,quotePrice,fundingRateBase,fundingRateQuote
 
 Config overrides:
-  --set-thresholdPct 0.1 --set-stopLossPct 0.4 --set-useMlFilter false
+  --set-thresholdPct 0.1 --set-stopLossPct 0.4 --set-useMlFilter false --set-strategyMode pairs
 `);
 }
 
@@ -148,12 +218,26 @@ function main() {
   if (!explicitMlFlag && !configFileHasUseMlFilter) {
     baseConfig.useMlFilter = false;
   }
+  if (baseConfig.strategyMode === "pairs") {
+    const invalidPairPoint = series.find((point) => typeof point !== "object" || !Number.isFinite(Number(point.basePrice ?? point.base)) || !Number.isFinite(Number(point.quotePrice ?? point.quote)));
+    if (invalidPairPoint) {
+      throw new Error("Pairs strategy requires basePrice and quotePrice in every usable data row");
+    }
+  }
+  if (args["walk-forward"] || args.walkForward) {
+    console.log(JSON.stringify({
+      mode: "walk-forward",
+      warning: "First-pass grid search only; use broader out-of-sample and walk-forward validation before trusting parameters.",
+      ...runWalkForward({ series, baseConfig, args })
+    }, null, 2));
+    return;
+  }
   if (args.optimize) {
     const topN = Math.max(1, Number(args.top || 10));
     const output = optimizeBacktest({
       series,
       baseConfig,
-      searchSpace: loadSearchSpace(args),
+      searchSpace: loadSearchSpace(args, baseConfig.strategyMode),
       topN
     });
 

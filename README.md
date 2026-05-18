@@ -2,7 +2,14 @@
 
 Ez a projekt egy demo célú, Firestore-alapú, Cloud Run Jobbal futtatott kereskedési rendszer. A célja nem az, hogy egy-egy nagy találattal termeljen, hanem hogy szűrtebb belépésekkel, kontrollált kockázat mellett, kisebb és következetesebb eredményeket próbáljon elérni.
 
-## Mit csinál jelenleg az algoritmus
+## Strategy módok
+
+A bot két külön stratégiamódot támogat:
+
+- `strategyMode: "trend"`: az eddigi egy instrumentumos trend/pullback stratégia. Ez az alapértelmezett mód.
+- `strategyMode: "pairs"`: statisztikai arbitrázs / pairs trading mód két korrelált instrumentumra, például `BTCUSDT` és `ETHUSDT`.
+
+## Trend stratégia
 
 Az algoritmus alapvetően trend-követő logikát használ, nem egyszerű mean reversion modellt. Ez azt jelenti, hogy nem vakon akar fordulatokat elkapni, hanem azt keresi, amikor:
 
@@ -62,7 +69,46 @@ Az algoritmusban van egy könnyűsúlyú online ML szűrő is.
 
 Trader szemmel ez inkább egy plusz szűrő, nem "AI, ami önmagában kereskedik". Informatikai szempontból ez egy adaptív confidence layer, amely a klasszikus szabályalapú logika fölött ül.
 
-Megjegyzés: backtestnél rövidebb historikus mintákon az ML szűrő gyakran túlságosan visszafogja a kereskedéseket, ezért a CLI backtest alapból `useMlFilter=false` beállítással fut, hacsak ez nincs külön felülírva.
+Megjegyzés: backtestnél rövidebb historikus mintákon az ML szűrő gyakran túlságosan visszafogja a kereskedéseket, ezért a CLI backtest alapból `useMlFilter=false` beállítással fut, hacsak ez nincs külön felülírva. Pairs módban az ML nem döntéshozó, csak opcionális setup scorer lehet; a páros stratégia önmagában, szabályalapon is működik.
+
+## Pairs trading stratégia
+
+Pairs módban a bot két árfolyamot tart nyilván:
+
+- `baseSymbol`, alapból `BTCUSDT`
+- `quoteSymbol`, alapból `ETHUSDT`
+
+A stratégia gördülő ablakon számolja a két instrumentum hozamkorrelációját, a beta hedge becslést, a spread átlagát/szórását és a z-score-t. A spread definíciója log módban:
+
+```text
+logSpread = log(quotePrice) - beta * log(basePrice)
+```
+
+Ez alapján:
+
+- magas z-score: a quote drága a base-hez képest, ezért a bot `SHORT quote / LONG base` párpozíciót nyit;
+- alacsony z-score: a quote olcsó a base-hez képest, ezért `LONG quote / SHORT base` párpozíciót nyit.
+
+A belépéshez teljesülnie kell a minimum korrelációnak, a z-score küszöbnek és ha számolható, a half-life szűrőnek. A kilépés mean reversion esetén `pairExitZScore` alatt történik, stop pedig `pairStopZScore`, korrelációromlás, időlimit vagy risk budget sérülés miatt lehet.
+
+Példa config:
+
+```json
+{
+  "strategyMode": "pairs",
+  "baseSymbol": "BTCUSDT",
+  "quoteSymbol": "ETHUSDT",
+  "pairLookbackBars": 120,
+  "pairMinCorrelation": 0.65,
+  "pairEntryZScore": 2.0,
+  "pairExitZScore": 0.4,
+  "pairStopZScore": 3.2,
+  "pairHedgeMode": "beta",
+  "pairRiskPerTradePct": 0.5,
+  "pairMaxGrossExposurePct": 30,
+  "useMlFilter": false
+}
+```
 
 ## Informatikai megvalósítás
 
@@ -95,6 +141,11 @@ Néhány fontosabb hangolható mező:
 - `breakEvenTriggerR`, `trailingStopR`: profitvédelem szabályai.
 - `maxHoldCycles`: maximális bent tartási idő.
 - `useMlFilter`, `mlMinConfPct`: ML megerősítés használata.
+- `pairLookbackBars`, `pairMinCorrelation`: pairs statisztikai ablak és minimum korreláció.
+- `pairEntryZScore`, `pairExitZScore`, `pairStopZScore`: pairs belépési, kilépési és stop z-score küszöbök.
+- `pairHedgeMode`: `beta` vagy `notional` hedge.
+- `pairRiskPerTradePct`, `pairMaxGrossExposurePct`: páros pozíció kockázati és gross exposure korlátai.
+- `maxDailyLossPct`, `maxWeeklyLossPct`, `maxConsecutiveLosses`, `pauseAfterDrawdownPct`: új belépéseket tiltó demo kill switch korlátok.
 
 ## Backtest és optimalizálás
 
@@ -102,6 +153,44 @@ A projekt tartalmaz lokális backtest és grid-search optimalizáló eszközt is
 
 - Sima backtest: `npm run backtest -- --data ./data/prices.json`
 - Optimalizálás: `npm run backtest -- --data ./data/prices.json --optimize --top 5`
+- Pair backtest: `npm run backtest -- --data ./data/pair-prices.csv --set-strategyMode pairs --set-baseSymbol BTCUSDT --set-quoteSymbol ETHUSDT`
+- Pair optimalizálás: `npm run backtest -- --data ./data/pair-prices.csv --set-strategyMode pairs --optimize`
+- Walk-forward mód: `npm run backtest -- --data ./data/pair-prices.csv --strategy pairs --walk-forward`
+
+Régi single-symbol JSON formátum:
+
+```json
+[100, 101, 102]
+```
+
+vagy:
+
+```json
+[
+  { "price": 65000, "fundingRate": 0.0001, "ts": 1710000000000 }
+]
+```
+
+Pair JSON formátum:
+
+```json
+[
+  {
+    "ts": 1710000000000,
+    "basePrice": 65000,
+    "quotePrice": 3200,
+    "fundingRateBase": 0.0001,
+    "fundingRateQuote": 0.0001
+  }
+]
+```
+
+Pair CSV fejléc:
+
+```csv
+ts,basePrice,quotePrice,fundingRateBase,fundingRateQuote
+1710000000000,65000,3200,0.0001,0.0001
+```
 
 A backtest a jelenlegi stratégialogikát futtatja végig historikus adaton. Az optimalizáló több paraméterkombinációt próbál ki, majd pontozza őket profit, expectancy, win rate, profit factor, activity és drawdown alapján.
 
@@ -111,9 +200,11 @@ Ez nem helyettesíti a professzionális walk-forward validációt, de jó első 
 
 - Ez továbbra is demo rendszer, nem valós execution engine.
 - A profit nem garantálható.
+- A pairs/stat arb sem garantál profitot; a korrelációk széteshetnek, a spread tartósan elszaladhat.
 - A stratégia jelenlegi állapotában BTCUSDT típusú, rövid ciklusú futures/spot demózásra van hangolva.
 - A legjobb paraméterek idősíktól, instrumentumtól és piaci rezsimtől függnek.
-- A túlzott optimalizálás könnyen overfittinghez vezethet.
+- A backtest könnyen overfittelhet, különösen grid-search optimalizálásnál.
+- Live tradinghez sokkal szigorúbb execution, monitoring, likviditási, jogi és kockázati review kellene.
 
 ## Rövid összefoglaló
 
