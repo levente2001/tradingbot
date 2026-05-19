@@ -103,6 +103,7 @@ function loadSearchSpace(args, strategyMode = "trend") {
     // First-pass grid only. Treat results as hypothesis generation and validate with walk-forward/out-of-sample data.
     return {
       pairEntryZScore: [1.6, 2.0, 2.4],
+      pairMaxEntryZScore: [2.6, 2.8, 3.0],
       pairExitZScore: [0.2, 0.4, 0.6],
       pairStopZScore: [2.8, 3.2, 3.8],
       pairLookbackBars: [80, 120, 180],

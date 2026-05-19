@@ -40,6 +40,7 @@ function defaultConfig() {
     pairLookbackBars: 120,
     pairMinCorrelation: 0.65,
     pairEntryZScore: 2.0,
+    pairMaxEntryZScore: 2.8,
     pairExitZScore: 0.4,
     pairStopZScore: 3.2,
     pairUseLogSpread: true,
@@ -176,6 +177,7 @@ function sanitizeConfig(raw = {}) {
   const pairEntryZScore = clamp(asNumber(raw.pairEntryZScore, base.pairEntryZScore), 0.5, 6);
   const pairExitZScore = clamp(asNumber(raw.pairExitZScore, base.pairExitZScore), 0.05, pairEntryZScore - 0.05);
   const pairStopZScore = clamp(asNumber(raw.pairStopZScore, base.pairStopZScore), pairEntryZScore + 0.1, 10);
+  const pairMaxEntryZScore = clamp(asNumber(raw.pairMaxEntryZScore, base.pairMaxEntryZScore), pairEntryZScore, pairStopZScore);
 
   return {
     ...base,
@@ -194,6 +196,7 @@ function sanitizeConfig(raw = {}) {
     pairLookbackBars: clamp(Math.round(asNumber(raw.pairLookbackBars, base.pairLookbackBars)), 20, 500),
     pairMinCorrelation: clamp(asNumber(raw.pairMinCorrelation, base.pairMinCorrelation), 0, 0.99),
     pairEntryZScore,
+    pairMaxEntryZScore,
     pairExitZScore,
     pairStopZScore,
     pairUseLogSpread: normalizeBoolean(raw.pairUseLogSpread, base.pairUseLogSpread),
@@ -691,6 +694,8 @@ function analyzePairMarket(pairSeries, config) {
     rejectedReason = "half-life-out-of-range";
   } else if (absZ < asNumber(config.pairEntryZScore)) {
     rejectedReason = "zscore-below-entry";
+  } else if (absZ > asNumber(config.pairMaxEntryZScore) || absZ > asNumber(config.pairStopZScore)) {
+    rejectedReason = "zscore-above-max-entry";
   } else if (zScore > 0) {
     signal = {
       type: "PAIR_SHORT_SPREAD",

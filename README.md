@@ -89,7 +89,7 @@ Ez alapján:
 - magas z-score: a quote drága a base-hez képest, ezért a bot `SHORT quote / LONG base` párpozíciót nyit;
 - alacsony z-score: a quote olcsó a base-hez képest, ezért `LONG quote / SHORT base` párpozíciót nyit.
 
-A belépéshez teljesülnie kell a minimum korrelációnak, a z-score küszöbnek és ha számolható, a half-life szűrőnek. A kilépés mean reversion esetén `pairExitZScore` alatt történik, stop pedig `pairStopZScore`, korrelációromlás, időlimit vagy risk budget sérülés miatt lehet.
+A belépéshez teljesülnie kell a minimum korrelációnak, a half-life szűrőnek ha számolható, és a z-score-nak a `pairEntryZScore` és `pairMaxEntryZScore` közötti sávban kell lennie. A kilépés mean reversion esetén `pairExitZScore` alatt történik, stop pedig `pairStopZScore`, korrelációromlás, időlimit vagy risk budget sérülés miatt lehet.
 
 Példa config:
 
@@ -101,6 +101,7 @@ Példa config:
   "pairLookbackBars": 120,
   "pairMinCorrelation": 0.65,
   "pairEntryZScore": 2.0,
+  "pairMaxEntryZScore": 2.8,
   "pairExitZScore": 0.4,
   "pairStopZScore": 3.2,
   "pairHedgeMode": "beta",
@@ -142,7 +143,7 @@ Néhány fontosabb hangolható mező:
 - `maxHoldCycles`: maximális bent tartási idő.
 - `useMlFilter`, `mlMinConfPct`: ML megerősítés használata.
 - `pairLookbackBars`, `pairMinCorrelation`: pairs statisztikai ablak és minimum korreláció.
-- `pairEntryZScore`, `pairExitZScore`, `pairStopZScore`: pairs belépési, kilépési és stop z-score küszöbök.
+- `pairEntryZScore`, `pairMaxEntryZScore`, `pairExitZScore`, `pairStopZScore`: pairs belépési sáv, kilépési és stop z-score küszöbök.
 - `pairHedgeMode`: `beta` vagy `notional` hedge.
 - `pairRiskPerTradePct`, `pairMaxGrossExposurePct`: páros pozíció kockázati és gross exposure korlátai.
 - `maxDailyLossPct`, `maxWeeklyLossPct`, `maxConsecutiveLosses`, `pauseAfterDrawdownPct`: új belépéseket tiltó demo kill switch korlátok.
