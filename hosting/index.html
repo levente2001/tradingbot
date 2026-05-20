@@ -162,6 +162,15 @@
         <div class="field pairs-field"><label for="cfg_pairMinHalfLifeBars">pairMinHalfLifeBars</label><input id="cfg_pairMinHalfLifeBars" data-key="pairMinHalfLifeBars" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairMaxHalfLifeBars">pairMaxHalfLifeBars</label><input id="cfg_pairMaxHalfLifeBars" data-key="pairMaxHalfLifeBars" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairCooldownCycles">pairCooldownCycles</label><input id="cfg_pairCooldownCycles" data-key="pairCooldownCycles" data-type="number" inputmode="numeric"></div>
+        <div class="field pairs-field"><label for="cfg_usePairMetaModel">usePairMetaModel</label><select id="cfg_usePairMetaModel" data-key="usePairMetaModel" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field pairs-field"><label for="cfg_pairMetaMinProbability">pairMetaMinProbability</label><input id="cfg_pairMetaMinProbability" data-key="pairMetaMinProbability" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairMetaRequirePositiveEV">pairMetaRequirePositiveEV</label><select id="cfg_pairMetaRequirePositiveEV" data-key="pairMetaRequirePositiveEV" data-type="boolean"><option value="true">true</option><option value="false">false</option></select></div>
+        <div class="field pairs-field"><label for="cfg_pairRequireReversionConfirmation">pairRequireReversionConfirmation</label><select id="cfg_pairRequireReversionConfirmation" data-key="pairRequireReversionConfirmation" data-type="boolean"><option value="true">true</option><option value="false">false</option></select></div>
+        <div class="field pairs-field"><label for="cfg_pairReversionConfirmDelta">pairReversionConfirmDelta</label><input id="cfg_pairReversionConfirmDelta" data-key="pairReversionConfirmDelta" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairReversionConfirmBars">pairReversionConfirmBars</label><input id="cfg_pairReversionConfirmBars" data-key="pairReversionConfirmBars" data-type="number" inputmode="numeric"></div>
+        <div class="field pairs-field"><label for="cfg_pairPauseAfterPairLosses">pairPauseAfterPairLosses</label><input id="cfg_pairPauseAfterPairLosses" data-key="pairPauseAfterPairLosses" data-type="number" inputmode="numeric"></div>
+        <div class="field pairs-field"><label for="cfg_pairMaxSpreadVolatility">pairMaxSpreadVolatility</label><input id="cfg_pairMaxSpreadVolatility" data-key="pairMaxSpreadVolatility" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairMinRecentTradeProfitFactor">pairMinRecentTradeProfitFactor</label><input id="cfg_pairMinRecentTradeProfitFactor" data-key="pairMinRecentTradeProfitFactor" data-type="number" inputmode="decimal"></div>
       </form>
       <button class="save" id="saveConfigBtn">Save config</button>
     </section>
@@ -251,7 +260,16 @@
       pairMaxGrossExposurePct: 30,
       pairMinHalfLifeBars: 3,
       pairMaxHalfLifeBars: 80,
-      pairCooldownCycles: 2
+      pairCooldownCycles: 2,
+      usePairMetaModel: false,
+      pairMetaMinProbability: 0.58,
+      pairMetaRequirePositiveEV: true,
+      pairRequireReversionConfirmation: true,
+      pairReversionConfirmDelta: 0.15,
+      pairReversionConfirmBars: 2,
+      pairPauseAfterPairLosses: 0,
+      pairMaxSpreadVolatility: 0,
+      pairMinRecentTradeProfitFactor: 0
     };
 
     els.apiBaseLabel.textContent = API_BASE || "same-origin";
@@ -405,6 +423,10 @@
         kv("Beta", fmt(pair.beta, 4)),
         kv("Half-life bars", fmt(pair.halfLifeBars, 2)),
         kv("Rejected reason", pair.rejectedReason),
+        kv("Meta probability", fmt(pair.metaProbability, 4)),
+        kv("Meta expected value", money(pair.metaExpectedValue)),
+        kv("Meta rejection", pair.metaRejectedReason),
+        kv("Pending pair signal", pair.pendingPairSignal ? `${pair.pendingPairSignal.side} z ${fmt(pair.pendingPairSignal.firstZScore, 3)} until ${pair.pendingPairSignal.expiresCycle}` : "--"),
         kv("Position type", state.positionType || pos.type),
         kv("Pair side", pos.side),
         kv("Base leg", pos.baseSide),

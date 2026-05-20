@@ -118,16 +118,16 @@ npm run sync:worker-core
 2. Redeploy the Cloud Run Job:
 
 ```bash
-gcloud run jobs deploy JOB_NAME \
+gcloud run jobs deploy demo-trader-worker \
   --source ./worker \
-  --region REGION \
-  --project PROJECT_ID \
+  --region europe-west1 \
+  --project kalolevente-a7c68 \
   --task-timeout=600 \
   --max-retries=1 \
   --tasks=1 \
   --memory=512Mi \
   --cpu=1 \
-  --set-env-vars=TRADER_COLLECTION=demoTrader,GCP_REGION=REGION
+  --set-env-vars=TRADER_COLLECTION=demoTrader,GCP_REGION=europe-west1
 ```
 
 3. Redeploy the Firebase functions if `functions/` changed:

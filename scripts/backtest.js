@@ -141,6 +141,29 @@ function formatSummary(result) {
   };
 }
 
+function buildSetupExport(result) {
+  const rows = (result.trades || [])
+    .filter((trade) => trade.type === "PAIR" && (trade.setupLabel === 0 || trade.setupLabel === 1) && trade.setupFeatures)
+    .map((trade) => ({
+      features: trade.setupFeatures,
+      label: trade.setupLabel,
+      netPnl: trade.netPnl,
+      reason: trade.exitReason || trade.reason,
+      entryZScore: trade.entryZScore,
+      exitZScore: trade.exitZScore,
+      setupScoreAtEntry: trade.setupScoreAtEntry,
+      setupReturnR: trade.setupReturnR,
+      holdingCycles: trade.holdingCycles,
+      openedAt: trade.openedAt,
+      closedAt: trade.closedAt
+    }));
+  return {
+    strategyMode: "pairs",
+    createdAt: new Date().toISOString(),
+    rows
+  };
+}
+
 function runWalkForward({ series, baseConfig, args }) {
   const trainWindow = Math.max(100, Number(args.trainWindow || args["train-window"] || 240));
   const validationWindow = Math.max(20, Number(args.validationWindow || args["validation-window"] || 80));
@@ -188,6 +211,7 @@ Usage:
   node scripts/backtest.js --data ./data/prices.json --optimize
   node scripts/backtest.js --data ./data/prices.json --optimize --search ./search-space.json --top 5
   node scripts/backtest.js --data ./data/pair-prices.csv --strategy pairs --walk-forward
+  node scripts/backtest.js --data ./data/pair-prices.csv --strategy pairs --export-setups ./data/pair-setups.json
 
 Data formats:
   JSON: [100, 101, 102] or [{ "price": 100, "fundingRate": 0.0001, "ts": 1710000000000 }]
@@ -255,6 +279,18 @@ function main() {
   }
 
   const result = runBacktest({ series, config: baseConfig });
+  if (args["export-setups"] || args.exportSetups) {
+    const outPath = path.resolve(args["export-setups"] || args.exportSetups);
+    const dataset = buildSetupExport(result);
+    fs.writeFileSync(outPath, `${JSON.stringify(dataset, null, 2)}\n`);
+    console.log(JSON.stringify({
+      mode: "export-setups",
+      out: outPath,
+      rows: dataset.rows.length,
+      summary: formatSummary(result)
+    }, null, 2));
+    return;
+  }
   console.log(JSON.stringify({
     mode: "backtest",
     summary: formatSummary(result),

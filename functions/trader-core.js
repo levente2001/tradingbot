@@ -43,6 +43,19 @@ function defaultConfig() {
     pairMaxEntryZScore: 2.8,
     pairExitZScore: 0.4,
     pairStopZScore: 3.2,
+    usePairMetaModel: false,
+    pairMetaModelPath: "./data/pair-meta-model.json",
+    pairMetaModel: null,
+    pairMetaMinProbability: 0.58,
+    pairMetaMinExpectedR: 0.0,
+    pairMetaFailOpen: true,
+    pairMetaRequirePositiveEV: true,
+    pairRequireReversionConfirmation: true,
+    pairReversionConfirmDelta: 0.15,
+    pairReversionConfirmBars: 2,
+    pairMaxSpreadVolatility: 0,
+    pairMinRecentTradeProfitFactor: 0,
+    pairPauseAfterPairLosses: 0,
     pairUseLogSpread: true,
     pairHedgeMode: "beta",
     pairBetaLookbackBars: 120,
@@ -145,6 +158,10 @@ function defaultState(config = defaultConfig()) {
     lastTickAt: null,
     lastMessage: "Initialized",
     lastPairAnalysis: null,
+    lastPairMeta: null,
+    pairSetupLog: [],
+    pendingPairSignal: null,
+    pairRecentStats: null,
     rejectedSignals: {},
     mlSignal: null,
     mlState: defaultMlState(),
@@ -199,6 +216,19 @@ function sanitizeConfig(raw = {}) {
     pairMaxEntryZScore,
     pairExitZScore,
     pairStopZScore,
+    usePairMetaModel: normalizeBoolean(raw.usePairMetaModel, base.usePairMetaModel),
+    pairMetaModelPath: String(raw.pairMetaModelPath || base.pairMetaModelPath),
+    pairMetaModel: raw.pairMetaModel && typeof raw.pairMetaModel === "object" ? raw.pairMetaModel : base.pairMetaModel,
+    pairMetaMinProbability: clamp(asNumber(raw.pairMetaMinProbability, base.pairMetaMinProbability), 0, 1),
+    pairMetaMinExpectedR: asNumber(raw.pairMetaMinExpectedR, base.pairMetaMinExpectedR),
+    pairMetaFailOpen: normalizeBoolean(raw.pairMetaFailOpen, base.pairMetaFailOpen),
+    pairMetaRequirePositiveEV: normalizeBoolean(raw.pairMetaRequirePositiveEV, base.pairMetaRequirePositiveEV),
+    pairRequireReversionConfirmation: normalizeBoolean(raw.pairRequireReversionConfirmation, base.pairRequireReversionConfirmation),
+    pairReversionConfirmDelta: clamp(asNumber(raw.pairReversionConfirmDelta, base.pairReversionConfirmDelta), 0, 5),
+    pairReversionConfirmBars: clamp(Math.round(asNumber(raw.pairReversionConfirmBars, base.pairReversionConfirmBars)), 1, 24),
+    pairMaxSpreadVolatility: clamp(asNumber(raw.pairMaxSpreadVolatility, base.pairMaxSpreadVolatility), 0, 100),
+    pairMinRecentTradeProfitFactor: clamp(asNumber(raw.pairMinRecentTradeProfitFactor, base.pairMinRecentTradeProfitFactor), 0, 100),
+    pairPauseAfterPairLosses: clamp(Math.round(asNumber(raw.pairPauseAfterPairLosses, base.pairPauseAfterPairLosses)), 0, 100),
     pairUseLogSpread: normalizeBoolean(raw.pairUseLogSpread, base.pairUseLogSpread),
     pairHedgeMode: raw.pairHedgeMode === "notional" ? "notional" : "beta",
     pairBetaLookbackBars: clamp(Math.round(asNumber(raw.pairBetaLookbackBars, base.pairBetaLookbackBars)), 20, 500),
@@ -296,6 +326,10 @@ function sanitizeState(raw = {}, config) {
     lastTickAt: raw.lastTickAt || null,
     lastMessage: String(raw.lastMessage || base.lastMessage),
     lastPairAnalysis: raw.lastPairAnalysis || null,
+    lastPairMeta: raw.lastPairMeta || null,
+    pairSetupLog: Array.isArray(raw.pairSetupLog) ? raw.pairSetupLog.slice(-1000) : [],
+    pendingPairSignal: raw.pendingPairSignal || null,
+    pairRecentStats: raw.pairRecentStats || null,
     rejectedSignals: raw.rejectedSignals || {},
     mlSignal: raw.mlSignal || null,
     mlState: sanitizeMlState(raw.mlState),
@@ -728,6 +762,227 @@ function analyzePairMarket(pairSeries, config) {
   };
 }
 
+function finiteNumber(value, fallback = 0) {
+  const num = asNumber(value, fallback);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function pairReturnForBars(pairSeries, key, barsAgo) {
+  const last = getBar(pairSeries || [], 0);
+  const prev = getBar(pairSeries || [], barsAgo);
+  if (!last || !prev) return 0;
+  const prevValue = asNumber(prev[key], 0);
+  return prevValue ? (asNumber(last[key], 0) - prevValue) / prevValue : 0;
+}
+
+function pairVolatilityForBars(pairSeries, key, bars = 12) {
+  return stdev(pairReturns((pairSeries || []).slice(-Math.max(3, bars + 1)), key, bars));
+}
+
+function pairZScoreAt(pairSeries, config, endOffset = 0) {
+  const lookback = Math.round(asNumber(config.pairLookbackBars));
+  const end = endOffset > 0 ? pairSeries.length - endOffset : pairSeries.length;
+  if (end < lookback) return 0;
+  const window = pairSeries.slice(end - lookback, end);
+  const baseReturns = pairReturns(window, "base", lookback);
+  const quoteReturns = pairReturns(window, "quote", lookback);
+  const beta = estimateBeta(baseReturns, quoteReturns) || 1;
+  const spreads = window.map((entry) => {
+    const base = asNumber(entry.base);
+    const quote = asNumber(entry.quote);
+    return config.pairUseLogSpread ? Math.log(quote) - beta * Math.log(base) : quote - beta * base;
+  });
+  const sd = stdev(spreads);
+  return sd > 0 ? (spreads[spreads.length - 1] - average(spreads)) / sd : 0;
+}
+
+function buildPairSetupFeatures(state, config, analysis) {
+  const pairSeries = Array.isArray(state.pairSeries) ? state.pairSeries : [];
+  const zNow = finiteNumber(analysis && analysis.zScore);
+  const z1 = pairSeries.length > Math.round(asNumber(config.pairLookbackBars)) ? pairZScoreAt(pairSeries, config, 1) : zNow;
+  const z3 = pairSeries.length > Math.round(asNumber(config.pairLookbackBars)) + 3 ? pairZScoreAt(pairSeries, config, 3) : zNow;
+  const ts = pairSeries.length ? asNumber(pairSeries[pairSeries.length - 1].t, Date.now()) : Date.now();
+  const hourOfDay = new Date(ts).getUTCHours();
+  const recent = state.pairRecentStats || {};
+  return {
+    zScore: finiteNumber(zNow),
+    absZScore: finiteNumber(analysis && analysis.absZScore, Math.abs(zNow)),
+    zScoreVelocity1: finiteNumber(zNow - z1),
+    zScoreVelocity3: finiteNumber(zNow - z3),
+    correlation: finiteNumber(analysis && analysis.correlation),
+    beta: finiteNumber(analysis && analysis.beta, 1),
+    halfLifeBars: finiteNumber(analysis && analysis.halfLifeBars),
+    spreadStd: finiteNumber(analysis && analysis.spreadStd),
+    baseReturn1: finiteNumber(pairReturnForBars(pairSeries, "base", 1)),
+    baseReturn3: finiteNumber(pairReturnForBars(pairSeries, "base", 3)),
+    baseReturn6: finiteNumber(pairReturnForBars(pairSeries, "base", 6)),
+    quoteReturn1: finiteNumber(pairReturnForBars(pairSeries, "quote", 1)),
+    quoteReturn3: finiteNumber(pairReturnForBars(pairSeries, "quote", 3)),
+    quoteReturn6: finiteNumber(pairReturnForBars(pairSeries, "quote", 6)),
+    baseVolatility: finiteNumber(pairVolatilityForBars(pairSeries, "base")),
+    quoteVolatility: finiteNumber(pairVolatilityForBars(pairSeries, "quote")),
+    fundingRateBase: finiteNumber(state.fundingRateBase),
+    fundingRateQuote: finiteNumber(state.fundingRateQuote),
+    hourOfDay: finiteNumber(hourOfDay),
+    cycleCount: finiteNumber(state.cycleCount),
+    recentWinRate: finiteNumber(recent.winRate),
+    recentProfitFactor: finiteNumber(recent.profitFactor),
+    recentDrawdownPct: finiteNumber(recent.drawdownPct)
+  };
+}
+
+function pairRecentTradeStats(history, config, limit = 20) {
+  const trades = (history.trades || []).filter((trade) => trade.type === "PAIR").slice(0, limit);
+  const wins = trades.filter((trade) => asNumber(trade.netPnl) > 0);
+  const losses = trades.filter((trade) => asNumber(trade.netPnl) <= 0);
+  const grossProfit = wins.reduce((sum, trade) => sum + asNumber(trade.netPnl), 0);
+  const grossLossAbs = Math.abs(losses.reduce((sum, trade) => sum + Math.min(0, asNumber(trade.netPnl)), 0));
+  let consecutiveLosses = 0;
+  for (const trade of trades) {
+    if (asNumber(trade.netPnl) <= 0) consecutiveLosses += 1;
+    else break;
+  }
+  return {
+    count: trades.length,
+    winRate: trades.length ? wins.length / trades.length : 0,
+    profitFactor: grossLossAbs > 0 ? grossProfit / grossLossAbs : (grossProfit > 0 ? 999 : 0),
+    consecutiveLosses,
+    drawdownPct: finiteNumber((history.trades || [])[0] && config.startBalance ? Math.max(0, (asNumber(config.startBalance) - asNumber((history.trades || [])[0].balanceAfter, config.startBalance)) / Math.max(1, asNumber(config.startBalance)) * 100) : 0)
+  };
+}
+
+function appendPairSetupLog(state, config, entry) {
+  const current = Array.isArray(state.pairSetupLog) ? state.pairSetupLog : [];
+  state.pairSetupLog = [entry, ...current].slice(0, 1000);
+  return entry;
+}
+
+function updatePairSetupLogLabel(state, setupId, patch) {
+  if (!setupId || !Array.isArray(state.pairSetupLog)) return;
+  state.pairSetupLog = state.pairSetupLog.map((entry) => (
+    entry.id === setupId ? { ...entry, ...patch } : entry
+  )).slice(0, 1000);
+}
+
+function loadPairMetaModel(config) {
+  if (config.pairMetaModel && typeof config.pairMetaModel === "object") return config.pairMetaModel;
+  if (!config.pairMetaModelPath) return null;
+  try {
+    const fs = require("fs");
+    const modelText = fs.readFileSync(String(config.pairMetaModelPath), "utf8");
+    return JSON.parse(modelText);
+  } catch (error) {
+    return null;
+  }
+}
+
+function sigmoid(value) {
+  if (value >= 35) return 1;
+  if (value <= -35) return 0;
+  return 1 / (1 + Math.exp(-value));
+}
+
+function scorePairSetupWithModel(model, features) {
+  if (!model || model.type !== "logistic_regression" || !Array.isArray(model.features)) return null;
+  let z = asNumber(model.bias, 0);
+  for (const name of model.features) {
+    const raw = finiteNumber(features[name]);
+    const mu = finiteNumber(model.mu && model.mu[name]);
+    const sigma = Math.max(1e-9, finiteNumber(model.sigma && model.sigma[name], 1));
+    const weight = finiteNumber(model.weights && model.weights[name]);
+    z += ((raw - mu) / sigma) * weight;
+  }
+  return sigmoid(z);
+}
+
+function pairExpectedValue(probability, model, state) {
+  const metrics = state.metrics || {};
+  const validation = model && model.validation ? model.validation : {};
+  const avgWin = Math.max(0, finiteNumber(model && model.avgWin, finiteNumber(validation.avgWin, finiteNumber(metrics.avgWin))));
+  const avgLoss = Math.abs(finiteNumber(model && model.avgLoss, finiteNumber(validation.avgLoss, finiteNumber(metrics.avgLoss))));
+  return probability * avgWin - (1 - probability) * avgLoss;
+}
+
+function pairSetupCandidate(state, config, analysis, features, nowTs) {
+  const signal = analysis.signal || {};
+  return {
+    id: `${nowTs}-${state.cycleCount}-${signal.side || "PAIR"}`,
+    timestamp: nowTs,
+    cycle: state.cycleCount,
+    signalType: signal.type,
+    side: signal.side,
+    baseSymbol: config.baseSymbol,
+    quoteSymbol: config.quoteSymbol,
+    zScore: analysis.zScore,
+    features,
+    accepted: false,
+    rejectReason: null,
+    finalLabel: null
+  };
+}
+
+function checkPairConfirmation(state, config, analysis) {
+  if (!config.pairRequireReversionConfirmation) {
+    state.pendingPairSignal = null;
+    return { ok: true };
+  }
+  const signal = analysis.signal;
+  const currentCycle = asNumber(state.cycleCount);
+  const currentZ = asNumber(analysis.zScore);
+  const pending = state.pendingPairSignal;
+  if (!pending || pending.side !== signal.side || currentCycle > asNumber(pending.expiresCycle)) {
+    state.pendingPairSignal = {
+      side: signal.side,
+      firstZScore: currentZ,
+      createdCycle: currentCycle,
+      expiresCycle: currentCycle + asNumber(config.pairReversionConfirmBars)
+    };
+    return { ok: false, reason: "reversion-not-confirmed" };
+  }
+
+  const delta = asNumber(config.pairReversionConfirmDelta);
+  const firstZ = asNumber(pending.firstZScore);
+  const confirmed = signal.side === "LONG_SPREAD"
+    ? currentZ >= firstZ + delta
+    : currentZ <= firstZ - delta;
+  if (!confirmed) return { ok: false, reason: "reversion-not-confirmed" };
+  state.pendingPairSignal = null;
+  return { ok: true };
+}
+
+function pairRegimeRejectReason(state, config, analysis) {
+  const stats = state.pairRecentStats || {};
+  const maxSpreadVol = asNumber(config.pairMaxSpreadVolatility);
+  if (maxSpreadVol > 0 && asNumber(analysis.spreadStd) > maxSpreadVol) return "spread-volatility-too-high";
+  const minProfitFactor = asNumber(config.pairMinRecentTradeProfitFactor);
+  if (minProfitFactor > 0 && asNumber(stats.count) > 0 && asNumber(stats.profitFactor) < minProfitFactor) return "pair-recent-profit-factor-low";
+  const pauseLosses = asNumber(config.pairPauseAfterPairLosses);
+  if (pauseLosses > 0 && asNumber(stats.consecutiveLosses) >= pauseLosses) return "pair-loss-pause";
+  return null;
+}
+
+function pairMetaReject(state, config, features) {
+  if (!config.usePairMetaModel) return { ok: true, probability: null, expectedValue: null };
+  const model = loadPairMetaModel(config);
+  if (!model) {
+    return config.pairMetaFailOpen
+      ? { ok: true, probability: null, expectedValue: null, reason: "pair-meta-model-missing" }
+      : { ok: false, probability: null, expectedValue: null, reason: "pair-meta-model-missing" };
+  }
+  // This model is a trade filter, not an oracle.
+  const probability = scorePairSetupWithModel(model, features);
+  if (probability == null) return { ok: false, probability: null, expectedValue: null, reason: "pair-meta-model-invalid" };
+  const expectedValue = pairExpectedValue(probability, model, state);
+  const minProbability = asNumber(config.pairMetaMinProbability);
+  if (probability < minProbability) {
+    return { ok: false, probability, expectedValue, reason: "pair-meta-probability-low" };
+  }
+  if (config.pairMetaRequirePositiveEV && expectedValue <= asNumber(config.pairMetaMinExpectedR)) {
+    return { ok: false, probability, expectedValue, reason: "pair-meta-ev-low" };
+  }
+  return { ok: true, probability, expectedValue };
+}
+
 function featureVector(points) {
   if (points.length < 12) return null;
   const prices = points.map((entry) => asNumber(entry.p));
@@ -1059,7 +1314,7 @@ function openPosition(state, config, side, reason, nowTs) {
   return true;
 }
 
-function openPairPosition(state, config, analysis, reason, nowTs) {
+function openPairPosition(state, config, analysis, reason, nowTs, setup = null) {
   if (!state.onboarded || state.position || !analysis || !analysis.signal) return false;
   if (!Number.isFinite(asNumber(state.basePrice, NaN)) || !Number.isFinite(asNumber(state.quotePrice, NaN))) return false;
   const sizing = computePairRiskSizing(config, state, analysis);
@@ -1105,8 +1360,21 @@ function openPairPosition(state, config, analysis, reason, nowTs) {
     bestZScore: analysis.zScore,
     worstZScore: analysis.zScore,
     correlationBreakCycles: 0,
-    beta: analysis.beta
+    beta: analysis.beta,
+    setupLogId: setup && setup.id,
+    setupFeatures: setup && setup.features ? setup.features : null,
+    setupScoreAtEntry: setup ? setup.setupScoreAtEntry : null,
+    setupExpectedValueAtEntry: setup ? setup.setupExpectedValueAtEntry : null
   };
+  if (setup && setup.id) {
+    updatePairSetupLogLabel(state, setup.id, {
+      accepted: true,
+      rejectReason: null,
+      openedAt: nowTs,
+      setupScoreAtEntry: setup.setupScoreAtEntry,
+      setupExpectedValueAtEntry: setup.setupExpectedValueAtEntry
+    });
+  }
   state.lastTradeCycle = state.cycleCount;
   state.lastMessage = `Opened ${analysis.signal.side} (${reason})`;
   return true;
@@ -1173,9 +1441,12 @@ function closePairPosition(state, config, history, note, nowTs, analysis = null)
   const closeFee = (asNumber(position.baseNotional) + asNumber(position.quoteNotional)) * feeRate(config);
   const fundingPnl = asNumber(position.fundingAccrued, 0);
   const netPnl = grossPnl + fundingPnl - closeFee - asNumber(position.openFee);
+  const setupLabel = netPnl > 0 ? 1 : 0;
+  const setupReturnR = netPnl / Math.max(1e-9, asNumber(position.riskBudget, 0));
+  const holdingCycles = state.cycleCount - asNumber(position.openedCycle, state.cycleCount);
 
   state.balance += asNumber(position.margin) + grossPnl + fundingPnl - closeFee;
-  appendClosedTrade(history, config, {
+  const closedTrade = {
     ts: nowTs,
     type: "PAIR",
     source: config.source,
@@ -1201,9 +1472,25 @@ function closePairPosition(state, config, history, note, nowTs, analysis = null)
     exitZScore: analysis ? analysis.zScore : position.currentZScore,
     correlation: analysis ? analysis.correlation : null,
     reason: note,
-    holdingCycles: state.cycleCount - asNumber(position.openedCycle, state.cycleCount),
+    exitReason: note,
+    holdingCycles,
+    riskBudget: position.riskBudget,
+    setupFeatures: position.setupFeatures || null,
+    setupScoreAtEntry: position.setupScoreAtEntry == null ? null : position.setupScoreAtEntry,
+    setupExpectedValueAtEntry: position.setupExpectedValueAtEntry == null ? null : position.setupExpectedValueAtEntry,
+    setupLabel,
+    setupReturnR,
     balanceAfter: state.balance,
     openedAt: position.openedAt,
+    closedAt: nowTs
+  };
+  appendClosedTrade(history, config, closedTrade);
+  updatePairSetupLogLabel(state, position.setupLogId, {
+    accepted: true,
+    finalLabel: setupLabel,
+    setupReturnR,
+    netPnl,
+    exitReason: note,
     closedAt: nowTs
   });
   state.position = null;
@@ -1417,7 +1704,7 @@ function maybeOpenTrade(state, config, history, nowTs) {
     state.lastMessage = `No new entries: ${killReason}`;
     return false;
   }
-  if (config.strategyMode === "pairs") return maybeOpenPairTrade(state, config, nowTs);
+  if (config.strategyMode === "pairs") return maybeOpenPairTrade(state, config, history, nowTs);
   if (state.cycleCount - asNumber(state.lastTradeCycle, -999999) <= asNumber(config.cooldownCycles)) return false;
   const market = analyzeMarket(state.priceSeries, config);
   if (!market) {
@@ -1444,12 +1731,25 @@ function maybeOpenTrade(state, config, history, nowTs) {
   return openPosition(state, config, side, config.useMlFilter ? `${baseReason}+ml` : baseReason, nowTs);
 }
 
-function maybeOpenPairTrade(state, config, nowTs) {
+function rejectPairSetupCandidate(state, config, candidate, reason, extra = {}) {
+  incrementReject(state, reason);
+  appendPairSetupLog(state, config, {
+    ...candidate,
+    ...extra,
+    accepted: false,
+    rejectReason: reason
+  });
+  return false;
+}
+
+function maybeOpenPairTrade(state, config, history, nowTs) {
   if (state.cycleCount - asNumber(state.lastTradeCycle, -999999) <= asNumber(config.pairCooldownCycles)) return false;
+  state.pairRecentStats = pairRecentTradeStats(history, config);
   const analysis = analyzePairMarket(state.pairSeries, config);
   state.lastPairAnalysis = analysis;
   if (!analysis.signal) {
     incrementReject(state, analysis.rejectedReason);
+    if (analysis.rejectedReason !== "zscore-below-entry") state.pendingPairSignal = null;
     if (analysis.rejectedReason === "warming-up") {
       state.lastMessage = `Warming up pair history (${analysis.currentBars}/${analysis.requiredBars})`;
     } else {
@@ -1458,18 +1758,65 @@ function maybeOpenPairTrade(state, config, nowTs) {
     return false;
   }
 
+  const features = buildPairSetupFeatures(state, config, analysis);
+  const candidate = pairSetupCandidate(state, config, analysis, features, nowTs);
+
+  const regimeReason = pairRegimeRejectReason(state, config, analysis);
+  if (regimeReason) {
+    state.pendingPairSignal = null;
+    state.lastMessage = `No pair signal: ${regimeReason}`;
+    return rejectPairSetupCandidate(state, config, candidate, regimeReason);
+  }
+
+  const confirmation = checkPairConfirmation(state, config, analysis);
+  if (!confirmation.ok) {
+    state.lastMessage = "Pair setup waiting for reversion confirmation";
+    return rejectPairSetupCandidate(state, config, candidate, confirmation.reason, {
+      pendingPairSignal: state.pendingPairSignal
+    });
+  }
+
+  const meta = pairMetaReject(state, config, features);
+  state.lastPairMeta = {
+    probability: meta.probability,
+    expectedValue: meta.expectedValue,
+    rejectedReason: meta.ok ? null : meta.reason
+  };
+  if (!meta.ok) {
+    state.lastMessage = meta.reason === "pair-meta-model-missing"
+      ? "Pair setup rejected: meta-model missing"
+      : "Pair setup rejected by meta-model";
+    return rejectPairSetupCandidate(state, config, candidate, "pair-meta-model", {
+      metaRejectReason: meta.reason,
+      setupScoreAtEntry: meta.probability,
+      setupExpectedValueAtEntry: meta.expectedValue
+    });
+  }
+
   if (config.useMlFilter) {
     const signal = state.mlSignal;
     const hasEnoughSamples = signal && signal.setupWinProbability != null;
     const enoughConf = hasEnoughSamples && asNumber(signal.setupWinProbability) >= asNumber(config.mlMinConfPct) / 100;
     if (hasEnoughSamples && !enoughConf) {
       state.lastMessage = "Pair setup rejected by optional ML scorer";
-      incrementReject(state, "ml-filter");
-      return false;
+      return rejectPairSetupCandidate(state, config, candidate, "ml-filter", {
+        setupScoreAtEntry: meta.probability,
+        setupExpectedValueAtEntry: meta.expectedValue
+      });
     }
   }
 
-  return openPairPosition(state, config, analysis, analysis.signal.type, nowTs);
+  const setup = appendPairSetupLog(state, config, {
+    ...candidate,
+    accepted: false,
+    setupScoreAtEntry: meta.probability,
+    setupExpectedValueAtEntry: meta.expectedValue
+  });
+  const opened = openPairPosition(state, config, analysis, analysis.signal.type, nowTs, setup);
+  if (!opened) {
+    updatePairSetupLogLabel(state, setup.id, { accepted: false, rejectReason: "entry-not-opened" });
+  }
+  return opened;
 }
 
 function normalizeBacktestPoint(point, index, config) {
@@ -1688,8 +2035,14 @@ function summarizeRuntime(config, state, history) {
         correlation: state.lastPairAnalysis.correlation,
         beta: state.lastPairAnalysis.beta,
         halfLifeBars: state.lastPairAnalysis.halfLifeBars,
-        rejectedReason: state.lastPairAnalysis.rejectedReason
+        rejectedReason: state.lastPairAnalysis.rejectedReason,
+        metaProbability: state.lastPairMeta ? state.lastPairMeta.probability : null,
+        metaExpectedValue: state.lastPairMeta ? state.lastPairMeta.expectedValue : null,
+        metaRejectedReason: state.lastPairMeta ? state.lastPairMeta.rejectedReason : null,
+        pendingPairSignal: state.pendingPairSignal || null
       } : null,
+      pendingPairSignal: state.pendingPairSignal || null,
+      pairRecentStats: state.pairRecentStats || null,
       rejectedSignals: state.rejectedSignals,
       mlSignal: state.mlSignal,
       metrics: state.metrics
@@ -1799,6 +2152,8 @@ module.exports = {
   DEFAULT_COLLECTION,
   defaultConfig,
   defaultState,
+  buildPairSetupFeatures,
+  scorePairSetupWithModel,
   runBacktest,
   optimizeBacktest,
   sanitizeConfig,

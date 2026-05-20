@@ -89,7 +89,7 @@ Ez alapján:
 - magas z-score: a quote drága a base-hez képest, ezért a bot `SHORT quote / LONG base` párpozíciót nyit;
 - alacsony z-score: a quote olcsó a base-hez képest, ezért `LONG quote / SHORT base` párpozíciót nyit.
 
-A belépéshez teljesülnie kell a minimum korrelációnak, a half-life szűrőnek ha számolható, és a z-score-nak a `pairEntryZScore` és `pairMaxEntryZScore` közötti sávban kell lennie. A kilépés mean reversion esetén `pairExitZScore` alatt történik, stop pedig `pairStopZScore`, korrelációromlás, időlimit vagy risk budget sérülés miatt lehet.
+A belépéshez teljesülnie kell a minimum korrelációnak, a half-life szűrőnek ha számolható, és a z-score-nak a `pairEntryZScore` és `pairMaxEntryZScore` közötti sávban kell lennie. Alapértelmezés szerint a bot reversion confirmation-t is kér: az első küszöbátlépés után megvárja, hogy a z-score visszaforduljon nullához `pairReversionConfirmDelta` mértékben `pairReversionConfirmBars` cikluson belül. A kilépés mean reversion esetén `pairExitZScore` alatt történik, stop pedig `pairStopZScore`, korrelációromlás, időlimit vagy risk budget sérülés miatt lehet.
 
 Példa config:
 
@@ -104,6 +104,9 @@ Példa config:
   "pairMaxEntryZScore": 2.8,
   "pairExitZScore": 0.4,
   "pairStopZScore": 3.2,
+  "pairRequireReversionConfirmation": true,
+  "pairReversionConfirmDelta": 0.15,
+  "pairReversionConfirmBars": 2,
   "pairHedgeMode": "beta",
   "pairRiskPerTradePct": 0.5,
   "pairMaxGrossExposurePct": 30,
@@ -144,6 +147,9 @@ Néhány fontosabb hangolható mező:
 - `useMlFilter`, `mlMinConfPct`: ML megerősítés használata.
 - `pairLookbackBars`, `pairMinCorrelation`: pairs statisztikai ablak és minimum korreláció.
 - `pairEntryZScore`, `pairMaxEntryZScore`, `pairExitZScore`, `pairStopZScore`: pairs belépési sáv, kilépési és stop z-score küszöbök.
+- `pairRequireReversionConfirmation`, `pairReversionConfirmDelta`, `pairReversionConfirmBars`: z-score visszafordulási megerősítés belépés előtt.
+- `usePairMetaModel`, `pairMetaMinProbability`, `pairMetaRequirePositiveEV`: opcionális meta-labeling alapú setup filter.
+- `pairMaxSpreadVolatility`, `pairMinRecentTradeProfitFactor`, `pairPauseAfterPairLosses`: egyszerű pairs regime/no-trade szűrők.
 - `pairHedgeMode`: `beta` vagy `notional` hedge.
 - `pairRiskPerTradePct`, `pairMaxGrossExposurePct`: páros pozíció kockázati és gross exposure korlátai.
 - `maxDailyLossPct`, `maxWeeklyLossPct`, `maxConsecutiveLosses`, `pauseAfterDrawdownPct`: új belépéseket tiltó demo kill switch korlátok.
@@ -157,6 +163,37 @@ A projekt tartalmaz lokális backtest és grid-search optimalizáló eszközt is
 - Pair backtest: `npm run backtest -- --data ./data/pair-prices.csv --set-strategyMode pairs --set-baseSymbol BTCUSDT --set-quoteSymbol ETHUSDT`
 - Pair optimalizálás: `npm run backtest -- --data ./data/pair-prices.csv --set-strategyMode pairs --optimize`
 - Walk-forward mód: `npm run backtest -- --data ./data/pair-prices.csv --strategy pairs --walk-forward`
+
+## Pair meta-labeling kutatás
+
+A meta-labeling réteg nem árfolyamirányt jósol. A rule-based pairs jel után setup score-ként működik: azt becsüli, hogy az adott belépési setup a díjak, slippage és funding után történelmileg milyen eséllyel lett nyereséges. Ez trade filter, nem oracle.
+
+Labeled setup dataset export:
+
+```bash
+node scripts/backtest.js --data ./data/pair-prices.csv --strategy pairs --export-setups ./data/pair-setups.json
+```
+
+Logistic regression meta-modell tanítása külső ML dependency nélkül:
+
+```bash
+npm run train:pair-meta -- --data ./data/pair-setups.json --out ./data/pair-meta-model.json
+```
+
+Runtime bekapcsolásnál Firebase-ben érdemes a modellt közvetlenül a config `pairMetaModel` mezőjébe menteni, mert Functions/Cloud Run környezetben a lokális `pairMetaModelPath` nem mindig olvasható megbízhatóan. Fontos kapcsolók:
+
+```json
+{
+  "strategyMode": "pairs",
+  "usePairMetaModel": true,
+  "pairMetaModel": { "type": "logistic_regression" },
+  "pairMetaMinProbability": 0.58,
+  "pairMetaRequirePositiveEV": true,
+  "pairMetaFailOpen": true
+}
+```
+
+A meta-modellt mindig időrend szerinti train/validation spliten és walk-forward/out-of-sample adaton kell ellenőrizni. A jobb backtest vagy magas validation accuracy nem garantál profitot; a spread rezsimje, likviditás, funding és korreláció hirtelen változhat.
 
 Régi single-symbol JSON formátum:
 

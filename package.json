@@ -9,6 +9,7 @@
   },
   "scripts": {
     "backtest": "node scripts/backtest.js",
+    "train:pair-meta": "node scripts/train-pair-meta-model.js",
     "check:functions": "node --check functions/index.js",
     "sync:runtime-core": "cp shared/trader-core.js functions/trader-core.js && cp shared/trader-core.js worker/lib/trader-core.generated.js",
     "sync:worker-core": "cp shared/trader-core.js worker/lib/trader-core.generated.js",
