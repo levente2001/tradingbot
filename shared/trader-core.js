@@ -69,12 +69,12 @@ function defaultConfig() {
     pairEarlyExitMinProfitUsd: 1.0,
     pairUniverseEnabled: false,
     pairUniverse: [
-      ["BTCUSDT", "ETHUSDT"],
-      ["BTCUSDT", "SOLUSDT"],
-      ["ETHUSDT", "SOLUSDT"],
-      ["BTCUSDT", "BNBUSDT"],
-      ["ETHUSDT", "BNBUSDT"],
-      ["SOLUSDT", "BNBUSDT"]
+      { baseSymbol: "BTCUSDT", quoteSymbol: "ETHUSDT" },
+      { baseSymbol: "BTCUSDT", quoteSymbol: "SOLUSDT" },
+      { baseSymbol: "ETHUSDT", quoteSymbol: "SOLUSDT" },
+      { baseSymbol: "BTCUSDT", quoteSymbol: "BNBUSDT" },
+      { baseSymbol: "ETHUSDT", quoteSymbol: "BNBUSDT" },
+      { baseSymbol: "SOLUSDT", quoteSymbol: "BNBUSDT" }
     ],
     allowTrendFallbackWhenNoPair: false,
     leverage: 8,
@@ -219,28 +219,54 @@ function normalizePairUniverse(raw, fallback) {
     try {
       source = JSON.parse(source);
     } catch (error) {
-      source = fallback;
+      source = [source];
     }
   }
+  if (
+    Array.isArray(source) &&
+    source.length === 2 &&
+    source.every((item) => typeof item === "string" && !/[\/_:]/.test(item))
+  ) {
+    source = [source];
+  }
+  if (source && typeof source === "object" && !Array.isArray(source)) source = [source];
   if (!Array.isArray(source)) source = fallback;
 
   const seen = new Set();
   const pairs = [];
   for (const item of source) {
-    if (!Array.isArray(item) || item.length < 2) continue;
-    const base = normalizeSymbol(item[0]);
-    const quote = normalizeSymbol(item[1]);
+    let base = "";
+    let quote = "";
+    if (Array.isArray(item) && item.length >= 2) {
+      base = normalizeSymbol(item[0]);
+      quote = normalizeSymbol(item[1]);
+    } else if (item && typeof item === "object") {
+      base = normalizeSymbol(item.baseSymbol || item.base || item[0]);
+      quote = normalizeSymbol(item.quoteSymbol || item.quote || item[1]);
+    } else if (typeof item === "string") {
+      const parts = item.split(/[\/_:]/).map((part) => normalizeSymbol(part)).filter(Boolean);
+      if (parts.length >= 2) {
+        base = parts[0];
+        quote = parts[1];
+      }
+    }
     if (!base || !quote || base === quote) continue;
     const key = pairKey(base, quote);
     if (seen.has(key)) continue;
     seen.add(key);
-    pairs.push([base, quote]);
+    pairs.push({ baseSymbol: base, quoteSymbol: quote });
   }
-  return pairs.length ? pairs : fallback.map(([base, quote]) => [base, quote]);
+  if (pairs.length) return pairs;
+  if (source !== fallback) return normalizePairUniverse(fallback, []);
+  return [];
 }
 
 function pairKey(baseSymbol, quoteSymbol) {
   return `${normalizeSymbol(baseSymbol)}_${normalizeSymbol(quoteSymbol)}`;
+}
+
+function getPairUniverseItems(config) {
+  return normalizePairUniverse(config.pairUniverse, defaultConfig().pairUniverse);
 }
 
 function sanitizeConfig(raw = {}) {
@@ -449,6 +475,7 @@ async function loadRuntime({ firestore, collectionPath = DEFAULT_COLLECTION }) {
 }
 
 async function saveRuntime({ refs, config, state, history }) {
+  config.pairUniverse = normalizePairUniverse(config.pairUniverse, defaultConfig().pairUniverse);
   await Promise.all([
     refs.config.set(config, { merge: true }),
     refs.state.set(state, { merge: true }),
@@ -514,8 +541,8 @@ async function fetchMarketSnapshot(config) {
 function uniqueUniverseSymbols(config) {
   const symbols = [];
   const seen = new Set();
-  for (const [base, quote] of normalizePairUniverse(config.pairUniverse, defaultConfig().pairUniverse)) {
-    for (const symbol of [base, quote]) {
+  for (const pair of getPairUniverseItems(config)) {
+    for (const symbol of [pair.baseSymbol, pair.quoteSymbol]) {
       if (seen.has(symbol)) continue;
       seen.add(symbol);
       symbols.push(symbol);
@@ -584,7 +611,9 @@ function appendPairUniversePoints(state, config, symbolPrices, ts) {
   if (!symbolPrices || typeof symbolPrices !== "object") return;
   const current = state.pairSeriesByKey && typeof state.pairSeriesByKey === "object" ? state.pairSeriesByKey : {};
   const next = { ...current };
-  for (const [baseSymbol, quoteSymbol] of config.pairUniverse) {
+  for (const pair of getPairUniverseItems(config)) {
+    const baseSymbol = pair.baseSymbol;
+    const quoteSymbol = pair.quoteSymbol;
     const base = asNumber(symbolPrices[baseSymbol], NaN);
     const quote = asNumber(symbolPrices[quoteSymbol], NaN);
     if (!Number.isFinite(base) || !Number.isFinite(quote) || base <= 0 || quote <= 0) continue;
@@ -2053,7 +2082,9 @@ function maybeOpenPairUniverseTrade(state, config, history, nowTs) {
   const valid = [];
   state.pairRecentStats = pairRecentTradeStats(history, config);
 
-  for (const [baseSymbol, quoteSymbol] of config.pairUniverse) {
+  for (const pair of getPairUniverseItems(config)) {
+    const baseSymbol = pair.baseSymbol;
+    const quoteSymbol = pair.quoteSymbol;
     const key = pairKey(baseSymbol, quoteSymbol);
     const pairSeries = state.pairSeriesByKey && state.pairSeriesByKey[key] ? state.pairSeriesByKey[key] : [];
     let analysis = withPairContext(analyzePairMarket(pairSeries, config), baseSymbol, quoteSymbol);
@@ -2239,9 +2270,9 @@ function normalizeBacktestPoint(point, index, config) {
   if (config.strategyMode === "pairs") {
     if (config.pairUniverseEnabled && point.prices && typeof point.prices === "object") {
       const prices = Object.fromEntries(Object.entries(point.prices).map(([symbol, price]) => [normalizeSymbol(symbol), asNumber(price)]));
-      const firstPair = config.pairUniverse[0] || [config.baseSymbol, config.quoteSymbol];
-      const baseSymbol = config.baseSymbol || firstPair[0];
-      const quoteSymbol = config.quoteSymbol || firstPair[1];
+      const firstPair = getPairUniverseItems(config)[0] || { baseSymbol: config.baseSymbol, quoteSymbol: config.quoteSymbol };
+      const baseSymbol = config.baseSymbol || firstPair.baseSymbol;
+      const quoteSymbol = config.quoteSymbol || firstPair.quoteSymbol;
       return {
         price: asNumber(prices[config.symbol], prices[baseSymbol]),
         basePrice: asNumber(prices[baseSymbol]),
@@ -2477,7 +2508,7 @@ function summarizeRuntime(config, state, history) {
       pairOpportunities: Array.isArray(state.pairOpportunities) ? state.pairOpportunities.slice(0, 10) : [],
       pairUniverseStatus: {
         enabled: Boolean(config.pairUniverseEnabled),
-        size: Array.isArray(config.pairUniverse) ? config.pairUniverse.length : 0,
+        size: getPairUniverseItems(config).length,
         symbols: config.pairUniverseEnabled ? uniqueUniverseSymbols(config) : [config.baseSymbol, config.quoteSymbol]
       },
       pairRecentStats: state.pairRecentStats || null,

@@ -101,12 +101,12 @@ Pairs módban opcionálisan bekapcsolható a pair universe scanner is:
   "strategyMode": "pairs",
   "pairUniverseEnabled": true,
   "pairUniverse": [
-    ["BTCUSDT", "ETHUSDT"],
-    ["BTCUSDT", "SOLUSDT"],
-    ["ETHUSDT", "SOLUSDT"],
-    ["BTCUSDT", "BNBUSDT"],
-    ["ETHUSDT", "BNBUSDT"],
-    ["SOLUSDT", "BNBUSDT"]
+    { "baseSymbol": "BTCUSDT", "quoteSymbol": "ETHUSDT" },
+    { "baseSymbol": "BTCUSDT", "quoteSymbol": "SOLUSDT" },
+    { "baseSymbol": "ETHUSDT", "quoteSymbol": "SOLUSDT" },
+    { "baseSymbol": "BTCUSDT", "quoteSymbol": "BNBUSDT" },
+    { "baseSymbol": "ETHUSDT", "quoteSymbol": "BNBUSDT" },
+    { "baseSymbol": "SOLUSDT", "quoteSymbol": "BNBUSDT" }
   ]
 }
 ```

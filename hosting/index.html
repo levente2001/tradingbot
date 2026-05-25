@@ -172,7 +172,11 @@
         <div class="field pairs-field"><label for="cfg_pairEarlyExitMinProfitUsd">pairEarlyExitMinProfitUsd</label><input id="cfg_pairEarlyExitMinProfitUsd" data-key="pairEarlyExitMinProfitUsd" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairUniverseEnabled">pairUniverseEnabled</label><select id="cfg_pairUniverseEnabled" data-key="pairUniverseEnabled" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
         <div class="field pairs-field"><label for="cfg_allowTrendFallbackWhenNoPair">allowTrendFallbackWhenNoPair</label><select id="cfg_allowTrendFallbackWhenNoPair" data-key="allowTrendFallbackWhenNoPair" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
-        <div class="field pairs-field" style="grid-column: 1 / -1;"><label for="cfg_pairUniverse">pairUniverse</label><textarea id="cfg_pairUniverse" data-key="pairUniverse" data-type="json"></textarea></div>
+        <div class="field pairs-field" style="grid-column: 1 / -1;">
+          <label for="cfg_pairUniverse">pairUniverse</label>
+          <textarea id="cfg_pairUniverse" data-key="pairUniverse" data-type="json"></textarea>
+          <div class="label">Use Firestore-safe object format: [{ "baseSymbol": "BTCUSDT", "quoteSymbol": "ETHUSDT" }]</div>
+        </div>
         <div class="field pairs-field"><label for="cfg_usePairMetaModel">usePairMetaModel</label><select id="cfg_usePairMetaModel" data-key="usePairMetaModel" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
         <div class="field pairs-field"><label for="cfg_pairMetaMinProbability">pairMetaMinProbability</label><input id="cfg_pairMetaMinProbability" data-key="pairMetaMinProbability" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairMetaRequirePositiveEV">pairMetaRequirePositiveEV</label><select id="cfg_pairMetaRequirePositiveEV" data-key="pairMetaRequirePositiveEV" data-type="boolean"><option value="true">true</option><option value="false">false</option></select></div>
@@ -288,7 +292,14 @@
       pairEarlyExitZScore: 1.2,
       pairEarlyExitMinProfitUsd: 1,
       pairUniverseEnabled: false,
-      pairUniverse: [["BTCUSDT", "ETHUSDT"], ["BTCUSDT", "SOLUSDT"], ["ETHUSDT", "SOLUSDT"], ["BTCUSDT", "BNBUSDT"], ["ETHUSDT", "BNBUSDT"], ["SOLUSDT", "BNBUSDT"]],
+      pairUniverse: [
+        { baseSymbol: "BTCUSDT", quoteSymbol: "ETHUSDT" },
+        { baseSymbol: "BTCUSDT", quoteSymbol: "SOLUSDT" },
+        { baseSymbol: "ETHUSDT", quoteSymbol: "SOLUSDT" },
+        { baseSymbol: "BTCUSDT", quoteSymbol: "BNBUSDT" },
+        { baseSymbol: "ETHUSDT", quoteSymbol: "BNBUSDT" },
+        { baseSymbol: "SOLUSDT", quoteSymbol: "BNBUSDT" }
+      ],
       allowTrendFallbackWhenNoPair: false,
       usePairMetaModel: false,
       pairMetaMinProbability: 0.58,
