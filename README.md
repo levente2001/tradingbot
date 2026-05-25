@@ -38,6 +38,9 @@ Röviden: a rendszer inkább megerősített trendet keres, és azon belül prób
 A stratégia erejének nagy része nem csak a belépőben, hanem a pozíció kezelésében van.
 
 - Kockázatalapú méretezés: a kötésméret a számlaegyenleghez, a stop távolságához és a maximális margin korláthoz igazodik.
+- Loss cooldown circuit breaker: ha a friss lezárt trade-ek veszteségsorozata eléri a `maxConsecutiveLosses` értéket, a bot nem áll le végleg, hanem `lossStreakCooldownCycles` ciklusig nem nyit új pozíciót, majd automatikusan folytathatja reduced risk módban.
+- Reduced risk mode: cooldown után a bot csökkentett kockázattal folytatja. A `riskPerTradePct` és a `pairRiskPerTradePct` runtime szinten szorzódik a `lossStreakReducedRiskMultiplier` értékkel, a mentett config módosítása nélkül. Két egymást követő nyereséges lezárt trade után visszaáll normál kockázatra.
+- Hard stop: ha a veszteségsorozat eléri a `hardStopAfterConsecutiveLosses` értéket, a bot továbbra is kemény stopot alkalmaz, mert ez már nem normál drawdown kezelés, hanem védelmi korlát.
 - Fix kezdeti stop-loss: minden trade azonnal kap stopot.
 - Fix kezdeti take-profit: az induló célár az induló kockázat többszöröse.
 - Break-even védelem: ha a trade elér egy bizonyos `R` nyereséget, a stop feljebb vagy lejjebb húzódik a belépő fölé/alá, hogy a jó trade ne forduljon vissza teljes veszteségbe.
@@ -90,6 +93,29 @@ Ez alapján:
 - alacsony z-score: a quote olcsó a base-hez képest, ezért `LONG quote / SHORT base` párpozíciót nyit.
 
 A belépéshez teljesülnie kell a minimum korrelációnak, a half-life szűrőnek ha számolható, és a z-score-nak a `pairEntryZScore` és `pairMaxEntryZScore` közötti sávban kell lennie. Alapértelmezés szerint a bot reversion confirmation-t is kér: az első küszöbátlépés után megvárja, hogy a z-score visszaforduljon nullához `pairReversionConfirmDelta` mértékben `pairReversionConfirmBars` cikluson belül. A kilépés mean reversion esetén `pairExitZScore` alatt történik, stop pedig `pairStopZScore`, korrelációromlás, időlimit vagy risk budget sérülés miatt lehet.
+
+Pairs módban opcionálisan bekapcsolható a pair universe scanner is:
+
+```json
+{
+  "strategyMode": "pairs",
+  "pairUniverseEnabled": true,
+  "pairUniverse": [
+    ["BTCUSDT", "ETHUSDT"],
+    ["BTCUSDT", "SOLUSDT"],
+    ["ETHUSDT", "SOLUSDT"],
+    ["BTCUSDT", "BNBUSDT"],
+    ["ETHUSDT", "BNBUSDT"],
+    ["SOLUSDT", "BNBUSDT"]
+  ]
+}
+```
+
+Ilyenkor a bot minden egyedi szimbólumra lekéri az árat, páronként külön idősorozatot tart fenn, minden párra ugyanazokat a korreláció, z-score, half-life, spread-volatility, confirmation és meta-model szűrőket futtatja, majd csak a legjobb érvényes jelöltet nyitja meg. Ez növelheti a trade lehetőségek számát úgy, hogy nem kell globálisan lejjebb venni a `pairEntryZScore` minőségi küszöböt. Több lehetőség ettől még nem jelent automatikusan jobb eredményt: több kötés több díjat, slippage-et, hibás rezsimet és overfitting kockázatot is jelenthet.
+
+Ha `allowTrendFallbackWhenNoPair: true`, universe pairs módban a bot párjel hiányában lefuttathatja a trend stratégiát a `symbol` mezőn. Az alapértelmezés `false`, hogy a pairs mód ne váltson észrevétlenül más stratégiára.
+
+Kis profitú pairs setupokra opcionális korai kilépés is van: `pairPartialExitEnabled`, `pairEarlyExitZScore` és `pairEarlyExitMinProfitUsd`. Ha bekapcsolt állapotban a spread már részben visszatért és az unrealized PnL pozitív a küszöb felett, a pozíció `early-profit-exit` okkal zárható.
 
 Példa config:
 
@@ -153,6 +179,9 @@ Néhány fontosabb hangolható mező:
 - `pairHedgeMode`: `beta` vagy `notional` hedge.
 - `pairRiskPerTradePct`, `pairMaxGrossExposurePct`: páros pozíció kockázati és gross exposure korlátai.
 - `maxDailyLossPct`, `maxWeeklyLossPct`, `maxConsecutiveLosses`, `pauseAfterDrawdownPct`: új belépéseket tiltó demo kill switch korlátok.
+- `lossStreakCooldownCycles`, `lossStreakReducedRiskMultiplier`, `autoResumeAfterLossCooldown`, `hardStopAfterConsecutiveLosses`: veszteségsorozat utáni cooldown, csökkentett kockázat és hard stop beállítások.
+- `pairUniverseEnabled`, `pairUniverse`, `allowTrendFallbackWhenNoPair`: multi-pair scanner és opcionális trend fallback.
+- `pairPartialExitEnabled`, `pairEarlyExitZScore`, `pairEarlyExitMinProfitUsd`: pairs korai profitvédő kilépés.
 
 ## Backtest és optimalizálás
 
@@ -219,6 +248,22 @@ Pair JSON formátum:
     "quotePrice": 3200,
     "fundingRateBase": 0.0001,
     "fundingRateQuote": 0.0001
+  }
+]
+```
+
+Pair universe JSON formátum:
+
+```json
+[
+  {
+    "ts": 1710000000000,
+    "prices": {
+      "BTCUSDT": 65000,
+      "ETHUSDT": 3200,
+      "SOLUSDT": 150,
+      "BNBUSDT": 600
+    }
   }
 ]
 ```

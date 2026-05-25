@@ -64,7 +64,7 @@
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .field { display: grid; gap: 6px; }
     .field label { color: var(--muted); font-size: 12px; }
-    input, select {
+    input, select, textarea {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -74,6 +74,7 @@
       font: 700 14px var(--mono);
       min-width: 0;
     }
+    textarea { min-height: 118px; resize: vertical; line-height: 1.35; }
     option { background: #0b1728; color: var(--text); }
     .section-title { grid-column: 1 / -1; margin: 8px 0 0; color: var(--accent-2); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
     .hidden { display: none !important; }
@@ -135,6 +136,10 @@
         <div class="field"><label for="cfg_maxDailyLossPct">maxDailyLossPct</label><input id="cfg_maxDailyLossPct" data-key="maxDailyLossPct" data-type="number" inputmode="decimal"></div>
         <div class="field"><label for="cfg_maxWeeklyLossPct">maxWeeklyLossPct</label><input id="cfg_maxWeeklyLossPct" data-key="maxWeeklyLossPct" data-type="number" inputmode="decimal"></div>
         <div class="field"><label for="cfg_maxConsecutiveLosses">maxConsecutiveLosses</label><input id="cfg_maxConsecutiveLosses" data-key="maxConsecutiveLosses" data-type="number" inputmode="numeric"></div>
+        <div class="field"><label for="cfg_lossStreakCooldownCycles">lossStreakCooldownCycles</label><input id="cfg_lossStreakCooldownCycles" data-key="lossStreakCooldownCycles" data-type="number" inputmode="numeric"></div>
+        <div class="field"><label for="cfg_lossStreakReducedRiskMultiplier">lossStreakReducedRiskMultiplier</label><input id="cfg_lossStreakReducedRiskMultiplier" data-key="lossStreakReducedRiskMultiplier" data-type="number" inputmode="decimal"></div>
+        <div class="field"><label for="cfg_autoResumeAfterLossCooldown">autoResumeAfterLossCooldown</label><select id="cfg_autoResumeAfterLossCooldown" data-key="autoResumeAfterLossCooldown" data-type="boolean"><option value="true">true</option><option value="false">false</option></select></div>
+        <div class="field"><label for="cfg_hardStopAfterConsecutiveLosses">hardStopAfterConsecutiveLosses</label><input id="cfg_hardStopAfterConsecutiveLosses" data-key="hardStopAfterConsecutiveLosses" data-type="number" inputmode="numeric"></div>
         <div class="field"><label for="cfg_pauseAfterDrawdownPct">pauseAfterDrawdownPct</label><input id="cfg_pauseAfterDrawdownPct" data-key="pauseAfterDrawdownPct" data-type="number" inputmode="decimal"></div>
 
         <div class="section-title trend-field">Trend</div>
@@ -162,6 +167,12 @@
         <div class="field pairs-field"><label for="cfg_pairMinHalfLifeBars">pairMinHalfLifeBars</label><input id="cfg_pairMinHalfLifeBars" data-key="pairMinHalfLifeBars" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairMaxHalfLifeBars">pairMaxHalfLifeBars</label><input id="cfg_pairMaxHalfLifeBars" data-key="pairMaxHalfLifeBars" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairCooldownCycles">pairCooldownCycles</label><input id="cfg_pairCooldownCycles" data-key="pairCooldownCycles" data-type="number" inputmode="numeric"></div>
+        <div class="field pairs-field"><label for="cfg_pairPartialExitEnabled">pairPartialExitEnabled</label><select id="cfg_pairPartialExitEnabled" data-key="pairPartialExitEnabled" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field pairs-field"><label for="cfg_pairEarlyExitZScore">pairEarlyExitZScore</label><input id="cfg_pairEarlyExitZScore" data-key="pairEarlyExitZScore" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairEarlyExitMinProfitUsd">pairEarlyExitMinProfitUsd</label><input id="cfg_pairEarlyExitMinProfitUsd" data-key="pairEarlyExitMinProfitUsd" data-type="number" inputmode="decimal"></div>
+        <div class="field pairs-field"><label for="cfg_pairUniverseEnabled">pairUniverseEnabled</label><select id="cfg_pairUniverseEnabled" data-key="pairUniverseEnabled" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field pairs-field"><label for="cfg_allowTrendFallbackWhenNoPair">allowTrendFallbackWhenNoPair</label><select id="cfg_allowTrendFallbackWhenNoPair" data-key="allowTrendFallbackWhenNoPair" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field pairs-field" style="grid-column: 1 / -1;"><label for="cfg_pairUniverse">pairUniverse</label><textarea id="cfg_pairUniverse" data-key="pairUniverse" data-type="json"></textarea></div>
         <div class="field pairs-field"><label for="cfg_usePairMetaModel">usePairMetaModel</label><select id="cfg_usePairMetaModel" data-key="usePairMetaModel" data-type="boolean"><option value="false">false</option><option value="true">true</option></select></div>
         <div class="field pairs-field"><label for="cfg_pairMetaMinProbability">pairMetaMinProbability</label><input id="cfg_pairMetaMinProbability" data-key="pairMetaMinProbability" data-type="number" inputmode="decimal"></div>
         <div class="field pairs-field"><label for="cfg_pairMetaRequirePositiveEV">pairMetaRequirePositiveEV</label><select id="cfg_pairMetaRequirePositiveEV" data-key="pairMetaRequirePositiveEV" data-type="boolean"><option value="true">true</option><option value="false">false</option></select></div>
@@ -183,6 +194,12 @@
     <section class="card" id="positionCard">
       <h2 id="positionTitle">Position</h2>
       <div class="grid" id="positionGrid"></div>
+    </section>
+
+    <section class="card">
+      <h2>Pair opportunities</h2>
+      <div class="grid" id="pairUniverseGrid"></div>
+      <div id="opportunitiesBox" style="margin-top: 10px;"></div>
     </section>
 
     <section class="card">
@@ -225,6 +242,8 @@
       metricsGrid: document.getElementById("metricsGrid"),
       positionTitle: document.getElementById("positionTitle"),
       positionGrid: document.getElementById("positionGrid"),
+      pairUniverseGrid: document.getElementById("pairUniverseGrid"),
+      opportunitiesBox: document.getElementById("opportunitiesBox"),
       rejectedBox: document.getElementById("rejectedBox"),
       tradesBox: document.getElementById("tradesBox")
     };
@@ -238,6 +257,10 @@
       maxDailyLossPct: 5,
       maxWeeklyLossPct: 12,
       maxConsecutiveLosses: 5,
+      lossStreakCooldownCycles: 72,
+      lossStreakReducedRiskMultiplier: 0.35,
+      autoResumeAfterLossCooldown: true,
+      hardStopAfterConsecutiveLosses: 10,
       pauseAfterDrawdownPct: 15,
       symbol: "BTCUSDT",
       riskPerTradePct: 0.75,
@@ -261,6 +284,12 @@
       pairMinHalfLifeBars: 3,
       pairMaxHalfLifeBars: 80,
       pairCooldownCycles: 2,
+      pairPartialExitEnabled: false,
+      pairEarlyExitZScore: 1.2,
+      pairEarlyExitMinProfitUsd: 1,
+      pairUniverseEnabled: false,
+      pairUniverse: [["BTCUSDT", "ETHUSDT"], ["BTCUSDT", "SOLUSDT"], ["ETHUSDT", "SOLUSDT"], ["BTCUSDT", "BNBUSDT"], ["ETHUSDT", "BNBUSDT"], ["SOLUSDT", "BNBUSDT"]],
+      allowTrendFallbackWhenNoPair: false,
       usePairMetaModel: false,
       pairMetaMinProbability: 0.58,
       pairMetaRequirePositiveEV: true,
@@ -346,6 +375,7 @@
     function setInputValue(input, value) {
       if (!input) return;
       if (input.dataset.type === "boolean") input.value = String(Boolean(value));
+      else if (input.dataset.type === "json") input.value = JSON.stringify(value ?? [], null, 2);
       else input.value = isValid(value) ? String(value) : "";
     }
 
@@ -372,6 +402,12 @@
           if (Number.isFinite(num)) payload[key] = num;
         } else if (type === "boolean") {
           payload[key] = input.value === "true";
+        } else if (type === "json") {
+          try {
+            payload[key] = JSON.parse(input.value);
+          } catch (error) {
+            throw new Error(`${key} JSON invalid: ${error.message}`);
+          }
         } else {
           payload[key] = input.value.trim();
         }
@@ -414,8 +450,9 @@
       const pair = state.pair || {};
       els.positionTitle.textContent = "Pairs status";
       els.positionGrid.innerHTML = [
-        kv("Base symbol", config.baseSymbol || state.baseSymbol || defaults.baseSymbol),
-        kv("Quote symbol", config.quoteSymbol || state.quoteSymbol || defaults.quoteSymbol),
+        kv("Base symbol", pos.baseSymbol || config.baseSymbol || state.baseSymbol || defaults.baseSymbol),
+        kv("Quote symbol", pos.quoteSymbol || config.quoteSymbol || state.quoteSymbol || defaults.quoteSymbol),
+        kv("Pair key", pos.pairKey),
         kv("Base price", fmt(state.basePrice, 2)),
         kv("Quote price", fmt(state.quotePrice, 2)),
         kv("Z-score", fmt(pair.zScore, 4)),
@@ -451,8 +488,13 @@
     }
 
     function renderMetrics(metrics = {}) {
+      const state = lastPayload?.state || {};
       els.metricsGrid.innerHTML = [
         kv("Balance", money(metrics.currentEquity ?? lastPayload?.state?.balance)),
+        kv("Risk mode", state.riskMode),
+        kv("Effective risk", pct(state.effectiveRiskPerTradePct)),
+        kv("Effective pair risk", pct(state.effectivePairRiskPerTradePct)),
+        kv("Loss cooldown until", state.lossCooldownUntilCycle),
         kv("Win rate", pct(metrics.winRatePct)),
         kv("Expectancy", fmt(metrics.expectancy, 4)),
         kv("Profit factor", fmt(metrics.profitFactor, 3)),
@@ -497,12 +539,36 @@
       )).join("");
     }
 
+    function renderPairOpportunities(state = {}) {
+      const universe = state.pairUniverseStatus || {};
+      els.pairUniverseGrid.innerHTML = [
+        kv("Universe enabled", universe.enabled),
+        kv("Universe pairs", universe.size),
+        kv("Symbols", Array.isArray(universe.symbols) ? universe.symbols.join(", ") : "--"),
+        kv("Cooldown until", state.lossCooldownUntilCycle)
+      ].join("");
+
+      const opportunities = Array.isArray(state.pairOpportunities) ? state.pairOpportunities.slice(0, 10) : [];
+      if (!opportunities.length) {
+        els.opportunitiesBox.innerHTML = '<div class="label">No pair opportunities yet.</div>';
+        return;
+      }
+      els.opportunitiesBox.innerHTML = opportunities.map((item) => (
+        `<div class="trade">
+          <div><strong>${safe(item.pairKey)}</strong> ${safe(item.baseSymbol)} / ${safe(item.quoteSymbol)}</div>
+          <div>z ${fmt(item.zScore, 3)} | corr ${fmt(item.correlation, 3)} | beta ${fmt(item.beta, 3)} | half-life ${fmt(item.halfLifeBars, 2)}</div>
+          <div>score <strong>${fmt(item.score, 3)}</strong> | ${safe(item.rejectedReason || "valid")}</div>
+        </div>`
+      )).join("");
+    }
+
     function renderAll(payload) {
       lastPayload = payload;
       renderStatus(payload);
       renderConfig(payload);
       renderMetrics(payload.state?.metrics || {});
       renderPosition(payload.state || {}, payload.config || {});
+      renderPairOpportunities(payload.state || {});
       renderTrades(payload.history || {});
       renderRejectedSignals(payload.state || {});
     }

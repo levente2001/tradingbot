@@ -219,6 +219,7 @@ Data formats:
         100,0.0001,1710000000000
   Pair JSON: [{ "ts": 1710000000000, "basePrice": 65000, "quotePrice": 3200, "fundingRateBase": 0.0001, "fundingRateQuote": 0.0001 }]
   Pair CSV:  ts,basePrice,quotePrice,fundingRateBase,fundingRateQuote
+  Pair universe JSON: [{ "ts": 1710000000000, "prices": { "BTCUSDT": 65000, "ETHUSDT": 3200, "SOLUSDT": 150, "BNBUSDT": 600 } }]
 
 Config overrides:
   --set-thresholdPct 0.1 --set-stopLossPct 0.4 --set-useMlFilter false --set-strategyMode pairs
@@ -243,7 +244,12 @@ function main() {
   if (!explicitMlFlag && !configFileHasUseMlFilter) {
     baseConfig.useMlFilter = false;
   }
-  if (baseConfig.strategyMode === "pairs") {
+  if (baseConfig.strategyMode === "pairs" && baseConfig.pairUniverseEnabled) {
+    const invalidUniversePoint = series.find((point) => typeof point !== "object" || !point.prices || typeof point.prices !== "object");
+    if (invalidUniversePoint) {
+      throw new Error("Pair universe backtest requires a prices object in every usable data row");
+    }
+  } else if (baseConfig.strategyMode === "pairs") {
     const invalidPairPoint = series.find((point) => typeof point !== "object" || !Number.isFinite(Number(point.basePrice ?? point.base)) || !Number.isFinite(Number(point.quotePrice ?? point.quote)));
     if (invalidPairPoint) {
       throw new Error("Pairs strategy requires basePrice and quotePrice in every usable data row");

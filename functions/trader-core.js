@@ -64,6 +64,19 @@ function defaultConfig() {
     pairMinHalfLifeBars: 3,
     pairMaxHalfLifeBars: 80,
     pairCooldownCycles: 2,
+    pairPartialExitEnabled: false,
+    pairEarlyExitZScore: 1.2,
+    pairEarlyExitMinProfitUsd: 1.0,
+    pairUniverseEnabled: false,
+    pairUniverse: [
+      ["BTCUSDT", "ETHUSDT"],
+      ["BTCUSDT", "SOLUSDT"],
+      ["ETHUSDT", "SOLUSDT"],
+      ["BTCUSDT", "BNBUSDT"],
+      ["ETHUSDT", "BNBUSDT"],
+      ["SOLUSDT", "BNBUSDT"]
+    ],
+    allowTrendFallbackWhenNoPair: false,
     leverage: 8,
     riskPerTradePct: 0.75,
     maxMarginPct: 20,
@@ -90,6 +103,10 @@ function defaultConfig() {
     maxDailyLossPct: 5,
     maxWeeklyLossPct: 12,
     maxConsecutiveLosses: 5,
+    lossStreakCooldownCycles: 72,
+    lossStreakReducedRiskMultiplier: 0.35,
+    autoResumeAfterLossCooldown: true,
+    hardStopAfterConsecutiveLosses: 10,
     pauseAfterDrawdownPct: 15,
     onboarded: false,
     nick: "",
@@ -151,6 +168,8 @@ function defaultState(config = defaultConfig()) {
     nextFundingTsQuote: null,
     priceSeries: [],
     pairSeries: [],
+    pairSeriesByKey: {},
+    symbolPrices: {},
     position: null,
     algoOn: false,
     cycleCount: 0,
@@ -161,8 +180,13 @@ function defaultState(config = defaultConfig()) {
     lastPairMeta: null,
     pairSetupLog: [],
     pendingPairSignal: null,
+    pendingPairSignalByKey: {},
     pairRecentStats: null,
+    pairOpportunities: [],
     rejectedSignals: {},
+    riskMode: "normal",
+    lossCooldownUntilCycle: null,
+    reducedRiskRecoveryWins: 0,
     mlSignal: null,
     mlState: defaultMlState(),
     metrics: defaultMetrics(asNumber(config.startBalance, 10000))
@@ -185,6 +209,40 @@ function normalizeBoolean(value, fallback) {
   return fallback;
 }
 
+function normalizeSymbol(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizePairUniverse(raw, fallback) {
+  let source = raw;
+  if (typeof source === "string") {
+    try {
+      source = JSON.parse(source);
+    } catch (error) {
+      source = fallback;
+    }
+  }
+  if (!Array.isArray(source)) source = fallback;
+
+  const seen = new Set();
+  const pairs = [];
+  for (const item of source) {
+    if (!Array.isArray(item) || item.length < 2) continue;
+    const base = normalizeSymbol(item[0]);
+    const quote = normalizeSymbol(item[1]);
+    if (!base || !quote || base === quote) continue;
+    const key = pairKey(base, quote);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push([base, quote]);
+  }
+  return pairs.length ? pairs : fallback.map(([base, quote]) => [base, quote]);
+}
+
+function pairKey(baseSymbol, quoteSymbol) {
+  return `${normalizeSymbol(baseSymbol)}_${normalizeSymbol(quoteSymbol)}`;
+}
+
 function sanitizeConfig(raw = {}) {
   const base = defaultConfig();
   const cycleIntervalMinutes = clamp(asNumber(raw.cycleIntervalMinutes ?? base.cycleIntervalMinutes, base.cycleIntervalMinutes), 1, 60);
@@ -195,6 +253,7 @@ function sanitizeConfig(raw = {}) {
   const pairExitZScore = clamp(asNumber(raw.pairExitZScore, base.pairExitZScore), 0.05, pairEntryZScore - 0.05);
   const pairStopZScore = clamp(asNumber(raw.pairStopZScore, base.pairStopZScore), pairEntryZScore + 0.1, 10);
   const pairMaxEntryZScore = clamp(asNumber(raw.pairMaxEntryZScore, base.pairMaxEntryZScore), pairEntryZScore, pairStopZScore);
+  const pairUniverse = normalizePairUniverse(raw.pairUniverse, base.pairUniverse);
 
   return {
     ...base,
@@ -237,6 +296,12 @@ function sanitizeConfig(raw = {}) {
     pairMinHalfLifeBars: clamp(asNumber(raw.pairMinHalfLifeBars, base.pairMinHalfLifeBars), 1, 200),
     pairMaxHalfLifeBars: clamp(asNumber(raw.pairMaxHalfLifeBars, base.pairMaxHalfLifeBars), 2, 500),
     pairCooldownCycles: clamp(Math.round(asNumber(raw.pairCooldownCycles, base.pairCooldownCycles)), 0, 48),
+    pairPartialExitEnabled: normalizeBoolean(raw.pairPartialExitEnabled, base.pairPartialExitEnabled),
+    pairEarlyExitZScore: clamp(asNumber(raw.pairEarlyExitZScore, base.pairEarlyExitZScore), 0.05, pairEntryZScore),
+    pairEarlyExitMinProfitUsd: Math.max(0, asNumber(raw.pairEarlyExitMinProfitUsd, base.pairEarlyExitMinProfitUsd)),
+    pairUniverseEnabled: normalizeBoolean(raw.pairUniverseEnabled, base.pairUniverseEnabled),
+    pairUniverse,
+    allowTrendFallbackWhenNoPair: normalizeBoolean(raw.allowTrendFallbackWhenNoPair, base.allowTrendFallbackWhenNoPair),
     leverage: clamp(asNumber(raw.leverage, base.leverage), 1, 25),
     riskPerTradePct: clamp(asNumber(raw.riskPerTradePct, base.riskPerTradePct), 0.1, 5),
     maxMarginPct: clamp(asNumber(raw.maxMarginPct, base.maxMarginPct), 1, 80),
@@ -263,6 +328,10 @@ function sanitizeConfig(raw = {}) {
     maxDailyLossPct: clamp(asNumber(raw.maxDailyLossPct, base.maxDailyLossPct), 0.1, 100),
     maxWeeklyLossPct: clamp(asNumber(raw.maxWeeklyLossPct, base.maxWeeklyLossPct), 0.1, 100),
     maxConsecutiveLosses: clamp(Math.round(asNumber(raw.maxConsecutiveLosses, base.maxConsecutiveLosses)), 1, 100),
+    lossStreakCooldownCycles: clamp(Math.round(asNumber(raw.lossStreakCooldownCycles, base.lossStreakCooldownCycles)), 1, 10000),
+    lossStreakReducedRiskMultiplier: clamp(asNumber(raw.lossStreakReducedRiskMultiplier, base.lossStreakReducedRiskMultiplier), 0.01, 1),
+    autoResumeAfterLossCooldown: normalizeBoolean(raw.autoResumeAfterLossCooldown, base.autoResumeAfterLossCooldown),
+    hardStopAfterConsecutiveLosses: clamp(Math.round(asNumber(raw.hardStopAfterConsecutiveLosses, base.hardStopAfterConsecutiveLosses)), Math.max(1, asNumber(raw.maxConsecutiveLosses, base.maxConsecutiveLosses)), 1000),
     pauseAfterDrawdownPct: clamp(asNumber(raw.pauseAfterDrawdownPct, base.pauseAfterDrawdownPct), 0.1, 100),
     onboarded: normalizeBoolean(raw.onboarded, base.onboarded),
     nick: String(raw.nick ?? base.nick),
@@ -300,6 +369,16 @@ function sanitizeHistory(raw = {}, config) {
   return { trades };
 }
 
+function sanitizePairSeriesByKey(raw = {}, config) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [key, series] of Object.entries(raw)) {
+    if (!Array.isArray(series)) continue;
+    out[key] = series.slice(-config.maxPricePoints);
+  }
+  return out;
+}
+
 function sanitizeState(raw = {}, config) {
   const base = defaultState(config);
   return {
@@ -319,6 +398,8 @@ function sanitizeState(raw = {}, config) {
     nextFundingTsQuote: raw.nextFundingTsQuote == null ? null : asNumber(raw.nextFundingTsQuote, null),
     priceSeries: Array.isArray(raw.priceSeries) ? raw.priceSeries.slice(-config.maxPricePoints) : [],
     pairSeries: Array.isArray(raw.pairSeries) ? raw.pairSeries.slice(-config.maxPricePoints) : [],
+    pairSeriesByKey: sanitizePairSeriesByKey(raw.pairSeriesByKey, config),
+    symbolPrices: raw.symbolPrices && typeof raw.symbolPrices === "object" ? raw.symbolPrices : {},
     position: raw.position || null,
     algoOn: normalizeBoolean(raw.algoOn, base.algoOn),
     cycleCount: Math.max(0, Math.round(asNumber(raw.cycleCount, 0))),
@@ -329,8 +410,13 @@ function sanitizeState(raw = {}, config) {
     lastPairMeta: raw.lastPairMeta || null,
     pairSetupLog: Array.isArray(raw.pairSetupLog) ? raw.pairSetupLog.slice(-1000) : [],
     pendingPairSignal: raw.pendingPairSignal || null,
+    pendingPairSignalByKey: raw.pendingPairSignalByKey && typeof raw.pendingPairSignalByKey === "object" ? raw.pendingPairSignalByKey : {},
     pairRecentStats: raw.pairRecentStats || null,
+    pairOpportunities: Array.isArray(raw.pairOpportunities) ? raw.pairOpportunities.slice(0, 10) : [],
     rejectedSignals: raw.rejectedSignals || {},
+    riskMode: raw.riskMode === "reduced" ? "reduced" : "normal",
+    lossCooldownUntilCycle: raw.lossCooldownUntilCycle == null ? null : Math.max(0, Math.round(asNumber(raw.lossCooldownUntilCycle, 0))),
+    reducedRiskRecoveryWins: Math.max(0, Math.round(asNumber(raw.reducedRiskRecoveryWins, 0))),
     mlSignal: raw.mlSignal || null,
     mlState: sanitizeMlState(raw.mlState),
     metrics: { ...defaultMetrics(config.startBalance), ...(raw.metrics || {}) }
@@ -380,6 +466,31 @@ async function fetchJson(url) {
 
 async function fetchMarketSnapshot(config) {
   if (config.strategyMode === "pairs") {
+    if (config.pairUniverseEnabled) {
+      const symbols = uniqueUniverseSymbols(config);
+      const snapshots = await Promise.all(symbols.map((symbol) => fetchSingleMarketSnapshot(config, symbol)));
+      const bySymbol = {};
+      symbols.forEach((symbol, index) => {
+        bySymbol[symbol] = snapshots[index];
+      });
+      const trend = bySymbol[config.symbol] || {};
+      const base = bySymbol[config.baseSymbol] || snapshots[0] || {};
+      const quote = bySymbol[config.quoteSymbol] || snapshots[1] || {};
+      return {
+        price: trend.price == null ? base.price : trend.price,
+        basePrice: base.price,
+        quotePrice: quote.price,
+        fundingRate: base.fundingRate,
+        fundingRateBase: base.fundingRate,
+        fundingRateQuote: quote.fundingRate,
+        nextFundingTs: base.nextFundingTs,
+        nextFundingTsBase: base.nextFundingTs,
+        nextFundingTsQuote: quote.nextFundingTs,
+        symbolPrices: Object.fromEntries(Object.entries(bySymbol).map(([symbol, snapshot]) => [symbol, snapshot.price])),
+        symbolFundingRates: Object.fromEntries(Object.entries(bySymbol).map(([symbol, snapshot]) => [symbol, snapshot.fundingRate])),
+        symbolNextFundingTs: Object.fromEntries(Object.entries(bySymbol).map(([symbol, snapshot]) => [symbol, snapshot.nextFundingTs]))
+      };
+    }
     const [base, quote] = await Promise.all([
       fetchSingleMarketSnapshot(config, config.baseSymbol),
       fetchSingleMarketSnapshot(config, config.quoteSymbol)
@@ -398,6 +509,28 @@ async function fetchMarketSnapshot(config) {
   }
 
   return fetchSingleMarketSnapshot(config, config.symbol);
+}
+
+function uniqueUniverseSymbols(config) {
+  const symbols = [];
+  const seen = new Set();
+  for (const [base, quote] of normalizePairUniverse(config.pairUniverse, defaultConfig().pairUniverse)) {
+    for (const symbol of [base, quote]) {
+      if (seen.has(symbol)) continue;
+      seen.add(symbol);
+      symbols.push(symbol);
+    }
+  }
+  if (!seen.has(config.baseSymbol)) {
+    seen.add(config.baseSymbol);
+    symbols.push(config.baseSymbol);
+  }
+  if (!seen.has(config.quoteSymbol)) {
+    seen.add(config.quoteSymbol);
+    symbols.push(config.quoteSymbol);
+  }
+  if (config.allowTrendFallbackWhenNoPair && !seen.has(config.symbol)) symbols.push(config.symbol);
+  return symbols;
 }
 
 async function fetchSingleMarketSnapshot(config, rawSymbol) {
@@ -445,6 +578,31 @@ function appendPairPoint(state, config, basePrice, quotePrice, ts) {
     }],
     config.maxPricePoints
   );
+}
+
+function appendPairUniversePoints(state, config, symbolPrices, ts) {
+  if (!symbolPrices || typeof symbolPrices !== "object") return;
+  const current = state.pairSeriesByKey && typeof state.pairSeriesByKey === "object" ? state.pairSeriesByKey : {};
+  const next = { ...current };
+  for (const [baseSymbol, quoteSymbol] of config.pairUniverse) {
+    const base = asNumber(symbolPrices[baseSymbol], NaN);
+    const quote = asNumber(symbolPrices[quoteSymbol], NaN);
+    if (!Number.isFinite(base) || !Number.isFinite(quote) || base <= 0 || quote <= 0) continue;
+    const key = pairKey(baseSymbol, quoteSymbol);
+    next[key] = trimPriceSeries(
+      [...(next[key] || []), {
+        t: ts,
+        base,
+        quote,
+        ratio: quote / base,
+        logSpread: Math.log(quote) - Math.log(base),
+        baseSymbol,
+        quoteSymbol
+      }],
+      config.maxPricePoints
+    );
+  }
+  state.pairSeriesByKey = next;
 }
 
 function getBar(points, barsAgo) {
@@ -796,8 +954,8 @@ function pairZScoreAt(pairSeries, config, endOffset = 0) {
   return sd > 0 ? (spreads[spreads.length - 1] - average(spreads)) / sd : 0;
 }
 
-function buildPairSetupFeatures(state, config, analysis) {
-  const pairSeries = Array.isArray(state.pairSeries) ? state.pairSeries : [];
+function buildPairSetupFeatures(state, config, analysis, overridePairSeries = null) {
+  const pairSeries = Array.isArray(overridePairSeries) ? overridePairSeries : (Array.isArray(state.pairSeries) ? state.pairSeries : []);
   const zNow = finiteNumber(analysis && analysis.zScore);
   const z1 = pairSeries.length > Math.round(asNumber(config.pairLookbackBars)) ? pairZScoreAt(pairSeries, config, 1) : zNow;
   const z3 = pairSeries.length > Math.round(asNumber(config.pairLookbackBars)) + 3 ? pairZScoreAt(pairSeries, config, 3) : zNow;
@@ -906,13 +1064,14 @@ function pairExpectedValue(probability, model, state) {
 function pairSetupCandidate(state, config, analysis, features, nowTs) {
   const signal = analysis.signal || {};
   return {
-    id: `${nowTs}-${state.cycleCount}-${signal.side || "PAIR"}`,
+    id: `${nowTs}-${state.cycleCount}-${analysis.pairKey || signal.side || "PAIR"}`,
     timestamp: nowTs,
     cycle: state.cycleCount,
     signalType: signal.type,
     side: signal.side,
-    baseSymbol: config.baseSymbol,
-    quoteSymbol: config.quoteSymbol,
+    pairKey: analysis.pairKey || pairKey(config.baseSymbol, config.quoteSymbol),
+    baseSymbol: analysis.baseSymbol || config.baseSymbol,
+    quoteSymbol: analysis.quoteSymbol || config.quoteSymbol,
     zScore: analysis.zScore,
     features,
     accepted: false,
@@ -922,21 +1081,36 @@ function pairSetupCandidate(state, config, analysis, features, nowTs) {
 }
 
 function checkPairConfirmation(state, config, analysis) {
+  const key = analysis.pairKey || null;
+  const pendingStore = key
+    ? (state.pendingPairSignalByKey = state.pendingPairSignalByKey && typeof state.pendingPairSignalByKey === "object" ? state.pendingPairSignalByKey : {})
+    : null;
+  const getPending = () => (key ? pendingStore[key] : state.pendingPairSignal);
+  const setPending = (value) => {
+    if (key) {
+      if (value) pendingStore[key] = value;
+      else delete pendingStore[key];
+      state.pendingPairSignal = value;
+    } else {
+      state.pendingPairSignal = value;
+    }
+  };
   if (!config.pairRequireReversionConfirmation) {
-    state.pendingPairSignal = null;
+    setPending(null);
     return { ok: true };
   }
   const signal = analysis.signal;
   const currentCycle = asNumber(state.cycleCount);
   const currentZ = asNumber(analysis.zScore);
-  const pending = state.pendingPairSignal;
+  const pending = getPending();
   if (!pending || pending.side !== signal.side || currentCycle > asNumber(pending.expiresCycle)) {
-    state.pendingPairSignal = {
+    setPending({
+      pairKey: key,
       side: signal.side,
       firstZScore: currentZ,
       createdCycle: currentCycle,
       expiresCycle: currentCycle + asNumber(config.pairReversionConfirmBars)
-    };
+    });
     return { ok: false, reason: "reversion-not-confirmed" };
   }
 
@@ -946,7 +1120,7 @@ function checkPairConfirmation(state, config, analysis) {
     ? currentZ >= firstZ + delta
     : currentZ <= firstZ - delta;
   if (!confirmed) return { ok: false, reason: "reversion-not-confirmed" };
-  state.pendingPairSignal = null;
+  setPending(null);
   return { ok: true };
 }
 
@@ -1131,6 +1305,18 @@ function calcLiquidationPrice(entry, leverage, side) {
   return side === "LONG" ? entry * (1 - 0.9 / lev) : entry * (1 + 0.9 / lev);
 }
 
+function riskModeMultiplier(config, state) {
+  return state && state.riskMode === "reduced" ? asNumber(config.lossStreakReducedRiskMultiplier, 1) : 1;
+}
+
+function effectiveRiskPerTradePct(config, state) {
+  return asNumber(config.riskPerTradePct) * riskModeMultiplier(config, state);
+}
+
+function effectivePairRiskPerTradePct(config, state) {
+  return asNumber(config.pairRiskPerTradePct, config.riskPerTradePct) * riskModeMultiplier(config, state);
+}
+
 function estimateFundingPnl(position, fundingRate, elapsedMs) {
   if (!position || !Number.isFinite(fundingRate) || elapsedMs <= 0) return 0;
   const sideFactor = position.side === "LONG" ? -1 : 1;
@@ -1167,7 +1353,7 @@ function computeRiskSizing(config, state, entryPrice) {
   const balance = asNumber(state.balance);
   const leverage = asNumber(config.leverage);
   const stopLossPct = asNumber(config.stopLossPct) / 100;
-  const riskBudget = balance * (asNumber(config.riskPerTradePct) / 100);
+  const riskBudget = balance * (effectiveRiskPerTradePct(config, state) / 100);
   const stopDistance = entryPrice * stopLossPct;
   const roundTripCostPerUnit = entryPrice * ((feeRate(config) + slipRate(config)) * 2);
   const riskPerUnit = stopDistance + roundTripCostPerUnit;
@@ -1192,7 +1378,7 @@ function computePairRiskSizing(config, state, analysis) {
   const leverage = asNumber(config.leverage);
   const basePrice = asNumber(state.basePrice);
   const quotePrice = asNumber(state.quotePrice);
-  const riskBudget = balance * (asNumber(config.pairRiskPerTradePct, config.riskPerTradePct) / 100);
+  const riskBudget = balance * (effectivePairRiskPerTradePct(config, state) / 100);
   const grossCap = balance * (asNumber(config.pairMaxGrossExposurePct) / 100) * leverage;
   const zDistance = Math.max(0.1, asNumber(config.pairStopZScore) - Math.abs(asNumber(analysis.zScore)));
   const riskFraction = Math.min(0.25, zDistance * 0.04 + (feeRate(config) + slipRate(config)) * 4);
@@ -1264,9 +1450,36 @@ function entryKillSwitchReason(state, config, history, nowTs) {
   const drawdownPct = asNumber(state.metrics && state.metrics.maxDrawdownPct, 0);
   if (dailyLossPct >= asNumber(config.maxDailyLossPct)) return `daily loss limit hit (${dailyLossPct.toFixed(2)}%)`;
   if (weeklyLossPct >= asNumber(config.maxWeeklyLossPct)) return `weekly loss limit hit (${weeklyLossPct.toFixed(2)}%)`;
-  if (stats.consecutiveLosses >= asNumber(config.maxConsecutiveLosses)) return `consecutive loss limit hit (${stats.consecutiveLosses})`;
+  if (stats.consecutiveLosses >= asNumber(config.hardStopAfterConsecutiveLosses)) return "Hard stop: too many consecutive losses";
+  if (stats.consecutiveLosses >= asNumber(config.maxConsecutiveLosses)) {
+    if (state.riskMode !== "reduced" || state.lossCooldownUntilCycle == null || state.cycleCount <= asNumber(state.lossCooldownUntilCycle)) {
+      state.riskMode = "reduced";
+      state.reducedRiskRecoveryWins = 0;
+      if (state.lossCooldownUntilCycle == null || state.cycleCount >= asNumber(state.lossCooldownUntilCycle)) {
+        state.lossCooldownUntilCycle = state.cycleCount + asNumber(config.lossStreakCooldownCycles);
+      }
+      return `Loss streak cooldown active until cycle ${state.lossCooldownUntilCycle}`;
+    }
+    if (!config.autoResumeAfterLossCooldown) return `Loss streak cooldown active until cycle ${state.lossCooldownUntilCycle}`;
+  }
   if (drawdownPct >= asNumber(config.pauseAfterDrawdownPct)) return `drawdown pause hit (${drawdownPct.toFixed(2)}%)`;
   return null;
+}
+
+function updateRiskModeAfterClosedTrade(state, config, netPnl) {
+  if (state.riskMode !== "reduced") return;
+  if (asNumber(netPnl) > 0) {
+    state.reducedRiskRecoveryWins = asNumber(state.reducedRiskRecoveryWins, 0) + 1;
+    if (state.reducedRiskRecoveryWins >= 2) {
+      state.riskMode = "normal";
+      state.lossCooldownUntilCycle = null;
+      state.reducedRiskRecoveryWins = 0;
+      state.lastMessage = "Reduced risk recovery complete";
+    }
+  } else {
+    state.reducedRiskRecoveryWins = 0;
+    state.lossCooldownUntilCycle = state.cycleCount + asNumber(config.lossStreakCooldownCycles);
+  }
 }
 
 function openPosition(state, config, side, reason, nowTs) {
@@ -1310,7 +1523,9 @@ function openPosition(state, config, side, reason, nowTs) {
     breakEvenArmed: false
   };
   state.lastTradeCycle = state.cycleCount;
-  state.lastMessage = `Opened ${side} (${reason})`;
+  state.lastMessage = state.riskMode === "reduced"
+    ? `Opened ${side} (${reason}) - Reduced risk mode active`
+    : `Opened ${side} (${reason})`;
   return true;
 }
 
@@ -1333,8 +1548,9 @@ function openPairPosition(state, config, analysis, reason, nowTs, setup = null) 
   state.position = {
     type: "PAIR",
     side: analysis.signal.side,
-    baseSymbol: config.baseSymbol,
-    quoteSymbol: config.quoteSymbol,
+    baseSymbol: analysis.baseSymbol || config.baseSymbol,
+    quoteSymbol: analysis.quoteSymbol || config.quoteSymbol,
+    pairKey: analysis.pairKey || pairKey(analysis.baseSymbol || config.baseSymbol, analysis.quoteSymbol || config.quoteSymbol),
     baseSide: analysis.signal.baseSide,
     quoteSide: analysis.signal.quoteSide,
     baseEntry: sizing.baseEntry,
@@ -1376,7 +1592,9 @@ function openPairPosition(state, config, analysis, reason, nowTs, setup = null) 
     });
   }
   state.lastTradeCycle = state.cycleCount;
-  state.lastMessage = `Opened ${analysis.signal.side} (${reason})`;
+  state.lastMessage = state.riskMode === "reduced"
+    ? `Opened ${analysis.signal.side} (${reason}) - Reduced risk mode active`
+    : `Opened ${analysis.signal.side} (${reason})`;
   return true;
 }
 
@@ -1451,6 +1669,7 @@ function closePairPosition(state, config, history, note, nowTs, analysis = null)
     type: "PAIR",
     source: config.source,
     side: position.side,
+    pairKey: position.pairKey || pairKey(position.baseSymbol, position.quoteSymbol),
     baseSymbol: position.baseSymbol,
     quoteSymbol: position.quoteSymbol,
     baseSide: position.baseSide,
@@ -1485,6 +1704,7 @@ function closePairPosition(state, config, history, note, nowTs, analysis = null)
     closedAt: nowTs
   };
   appendClosedTrade(history, config, closedTrade);
+  updateRiskModeAfterClosedTrade(state, config, netPnl);
   updatePairSetupLogLabel(state, position.setupLogId, {
     accepted: true,
     finalLabel: setupLabel,
@@ -1504,7 +1724,8 @@ function closePosition(state, config, history, exitRaw, note, nowTs) {
   if (!state.position) return false;
   const position = state.position;
   if (position.type === "PAIR") {
-    return closePairPosition(state, config, history, note, nowTs, analyzePairMarket(state.pairSeries, config));
+    syncPairPositionPrices(state, position);
+    return closePairPosition(state, config, history, note, nowTs, analyzePairMarket(pairSeriesForPosition(state, position), config));
   }
   const exit = applySlippage(asNumber(exitRaw), position.side, false, config);
   const direction = position.side === "LONG" ? 1 : -1;
@@ -1514,6 +1735,7 @@ function closePosition(state, config, history, exitRaw, note, nowTs) {
   const netPnl = pricePnl + fundingPnl - closeFee;
 
   state.balance += asNumber(position.margin) + netPnl;
+  const realizedNetPnl = netPnl - asNumber(position.openFee);
   appendClosedTrade(history, config, {
     ts: nowTs,
     symbol: config.symbol,
@@ -1525,12 +1747,13 @@ function closePosition(state, config, history, exitRaw, note, nowTs) {
     grossPnl: pricePnl,
     fundingPnl,
     fees: asNumber(position.openFee) + closeFee,
-    netPnl: netPnl - asNumber(position.openFee),
+    netPnl: realizedNetPnl,
     reason: note,
     balanceAfter: state.balance,
     openedAt: position.openedAt,
     closedAt: nowTs
   });
+  updateRiskModeAfterClosedTrade(state, config, realizedNetPnl);
   state.position = null;
   state.lastTradeCycle = state.cycleCount;
   state.lastMessage = `Closed position (${note})`;
@@ -1542,6 +1765,7 @@ function liquidate(state, config, history, reason, nowTs) {
   if (!state.position) return false;
   const position = state.position;
   const fundingPnl = asNumber(position.fundingAccrued, 0);
+  const realizedNetPnl = -asNumber(position.margin) + fundingPnl - asNumber(position.openFee);
   appendClosedTrade(history, config, {
     ts: nowTs,
     symbol: config.symbol,
@@ -1553,12 +1777,13 @@ function liquidate(state, config, history, reason, nowTs) {
     grossPnl: -asNumber(position.margin),
     fundingPnl,
     fees: asNumber(position.openFee),
-    netPnl: -asNumber(position.margin) + fundingPnl - asNumber(position.openFee),
+    netPnl: realizedNetPnl,
     reason: `LIQUIDATED (${reason})`,
     balanceAfter: state.balance,
     openedAt: position.openedAt,
     closedAt: nowTs
   });
+  updateRiskModeAfterClosedTrade(state, config, realizedNetPnl);
   state.position = null;
   state.lastTradeCycle = state.cycleCount;
   state.lastMessage = `Liquidated (${reason})`;
@@ -1568,7 +1793,14 @@ function liquidate(state, config, history, reason, nowTs) {
 
 function maybeManagePairPosition(state, config, history, nowTs) {
   const position = state.position;
-  const analysis = analyzePairMarket(state.pairSeries, config);
+  syncPairPositionPrices(state, position);
+  const activeSeries = pairSeriesForPosition(state, position);
+  const analysis = analyzePairMarket(activeSeries, config);
+  if (analysis) {
+    analysis.pairKey = position.pairKey || pairKey(position.baseSymbol, position.quoteSymbol);
+    analysis.baseSymbol = position.baseSymbol;
+    analysis.quoteSymbol = position.quoteSymbol;
+  }
   state.lastPairAnalysis = analysis;
   if (!analysis || !Number.isFinite(asNumber(analysis.zScore, NaN))) return;
 
@@ -1596,6 +1828,14 @@ function maybeManagePairPosition(state, config, history, nowTs) {
     closePairPosition(state, config, history, "mean-reversion-exit", nowTs, analysis);
     return;
   }
+  if (
+    config.pairPartialExitEnabled &&
+    absZ <= asNumber(config.pairEarlyExitZScore) &&
+    unrealized > asNumber(config.pairEarlyExitMinProfitUsd)
+  ) {
+    closePairPosition(state, config, history, "early-profit-exit", nowTs, analysis);
+    return;
+  }
   if (absZ >= asNumber(config.pairStopZScore) && (movedAgainstShort || movedAgainstLong)) {
     closePairPosition(state, config, history, "pair-zscore-stop", nowTs, analysis);
     return;
@@ -1611,6 +1851,20 @@ function maybeManagePairPosition(state, config, history, nowTs) {
   if (unrealized <= -Math.max(asNumber(position.riskBudget), 1)) {
     closePairPosition(state, config, history, "risk-budget-stop", nowTs, analysis);
   }
+}
+
+function pairSeriesForPosition(state, position) {
+  const key = position && (position.pairKey || pairKey(position.baseSymbol, position.quoteSymbol));
+  if (key && state.pairSeriesByKey && Array.isArray(state.pairSeriesByKey[key])) return state.pairSeriesByKey[key];
+  return state.pairSeries || [];
+}
+
+function syncPairPositionPrices(state, position) {
+  if (!position || !state.symbolPrices) return;
+  const basePrice = asNumber(state.symbolPrices[position.baseSymbol], NaN);
+  const quotePrice = asNumber(state.symbolPrices[position.quoteSymbol], NaN);
+  if (Number.isFinite(basePrice) && basePrice > 0) state.basePrice = basePrice;
+  if (Number.isFinite(quotePrice) && quotePrice > 0) state.quotePrice = quotePrice;
 }
 
 function calculatePairUnrealizedPnl(state, config) {
@@ -1697,14 +1951,7 @@ function maybeManageOpenPosition(state, config, history, nowTs) {
   }
 }
 
-function maybeOpenTrade(state, config, history, nowTs) {
-  if (!state.algoOn || !state.onboarded || state.position) return false;
-  const killReason = entryKillSwitchReason(state, config, history, nowTs);
-  if (killReason) {
-    state.lastMessage = `No new entries: ${killReason}`;
-    return false;
-  }
-  if (config.strategyMode === "pairs") return maybeOpenPairTrade(state, config, history, nowTs);
+function maybeOpenTrendTrade(state, config, history, nowTs, reasonPrefix = null) {
   if (state.cycleCount - asNumber(state.lastTradeCycle, -999999) <= asNumber(config.cooldownCycles)) return false;
   const market = analyzeMarket(state.priceSeries, config);
   if (!market) {
@@ -1728,7 +1975,19 @@ function maybeOpenTrade(state, config, history, nowTs) {
   }
 
   const baseReason = market.reason || "trend";
-  return openPosition(state, config, side, config.useMlFilter ? `${baseReason}+ml` : baseReason, nowTs);
+  const reason = reasonPrefix ? `${reasonPrefix}-${baseReason}` : baseReason;
+  return openPosition(state, config, side, config.useMlFilter ? `${reason}+ml` : reason, nowTs);
+}
+
+function maybeOpenTrade(state, config, history, nowTs) {
+  if (!state.algoOn || !state.onboarded || state.position) return false;
+  const killReason = entryKillSwitchReason(state, config, history, nowTs);
+  if (killReason) {
+    state.lastMessage = killReason.startsWith("Hard stop:") ? killReason : `No new entries: ${killReason}`;
+    return false;
+  }
+  if (config.strategyMode === "pairs") return maybeOpenPairTrade(state, config, history, nowTs);
+  return maybeOpenTrendTrade(state, config, history, nowTs);
 }
 
 function rejectPairSetupCandidate(state, config, candidate, reason, extra = {}) {
@@ -1742,11 +2001,153 @@ function rejectPairSetupCandidate(state, config, candidate, reason, extra = {}) 
   return false;
 }
 
+function recentPairLossPenalty(history, pairKeyValue) {
+  const recent = (history.trades || [])
+    .filter((trade) => trade.type === "PAIR" && (trade.pairKey || pairKey(trade.baseSymbol, trade.quoteSymbol)) === pairKeyValue)
+    .slice(0, 5);
+  let losses = 0;
+  for (const trade of recent) {
+    if (asNumber(trade.netPnl) <= 0) losses += 1;
+    else break;
+  }
+  return losses * 0.35;
+}
+
+function scorePairOpportunity(analysis, meta, history) {
+  const spreadStdPenalty = Math.min(2, asNumber(analysis.spreadStd) * 10);
+  const metaModelBonus = meta && meta.probability != null ? (asNumber(meta.probability) - 0.5) * 2 : 0;
+  return (
+    asNumber(analysis.absZScore) * 1.5 +
+    Math.max(0, asNumber(analysis.correlation)) * 2 -
+    spreadStdPenalty +
+    metaModelBonus -
+    recentPairLossPenalty(history, analysis.pairKey)
+  );
+}
+
+function pairOpportunitySummary(analysis, score = null) {
+  return {
+    pairKey: analysis.pairKey,
+    baseSymbol: analysis.baseSymbol,
+    quoteSymbol: analysis.quoteSymbol,
+    zScore: analysis.zScore,
+    correlation: analysis.correlation,
+    beta: analysis.beta,
+    halfLifeBars: analysis.halfLifeBars,
+    rejectedReason: analysis.rejectedReason || null,
+    score
+  };
+}
+
+function withPairContext(analysis, baseSymbol, quoteSymbol) {
+  return {
+    ...analysis,
+    pairKey: pairKey(baseSymbol, quoteSymbol),
+    baseSymbol,
+    quoteSymbol
+  };
+}
+
+function maybeOpenPairUniverseTrade(state, config, history, nowTs) {
+  const opportunities = [];
+  const valid = [];
+  state.pairRecentStats = pairRecentTradeStats(history, config);
+
+  for (const [baseSymbol, quoteSymbol] of config.pairUniverse) {
+    const key = pairKey(baseSymbol, quoteSymbol);
+    const pairSeries = state.pairSeriesByKey && state.pairSeriesByKey[key] ? state.pairSeriesByKey[key] : [];
+    let analysis = withPairContext(analyzePairMarket(pairSeries, config), baseSymbol, quoteSymbol);
+
+    if (!analysis.signal) {
+      incrementReject(state, analysis.rejectedReason);
+      opportunities.push(pairOpportunitySummary(analysis, null));
+      continue;
+    }
+
+    const features = buildPairSetupFeatures(state, config, analysis, pairSeries);
+    const candidate = pairSetupCandidate(state, config, analysis, features, nowTs);
+    const regimeReason = pairRegimeRejectReason(state, config, analysis);
+    if (regimeReason) {
+      incrementReject(state, regimeReason);
+      opportunities.push(pairOpportunitySummary({ ...analysis, rejectedReason: regimeReason }, null));
+      continue;
+    }
+
+    const confirmation = checkPairConfirmation(state, config, analysis);
+    if (!confirmation.ok) {
+      incrementReject(state, confirmation.reason);
+      opportunities.push(pairOpportunitySummary({ ...analysis, rejectedReason: confirmation.reason }, null));
+      continue;
+    }
+
+    const meta = pairMetaReject(state, config, features);
+    if (!meta.ok) {
+      incrementReject(state, meta.reason || "pair-meta-model");
+      opportunities.push(pairOpportunitySummary({ ...analysis, rejectedReason: meta.reason || "pair-meta-model" }, null));
+      continue;
+    }
+
+    if (config.useMlFilter) {
+      const signal = state.mlSignal;
+      const hasEnoughSamples = signal && signal.setupWinProbability != null;
+      const enoughConf = hasEnoughSamples && asNumber(signal.setupWinProbability) >= asNumber(config.mlMinConfPct) / 100;
+      if (hasEnoughSamples && !enoughConf) {
+        incrementReject(state, "ml-filter");
+        opportunities.push(pairOpportunitySummary({ ...analysis, rejectedReason: "ml-filter" }, null));
+        continue;
+      }
+    }
+
+    const score = scorePairOpportunity(analysis, meta, history);
+    const setup = {
+      ...candidate,
+      accepted: false,
+      setupScoreAtEntry: meta.probability,
+      setupExpectedValueAtEntry: meta.expectedValue
+    };
+    valid.push({ analysis, score, setup, meta });
+    opportunities.push(pairOpportunitySummary(analysis, score));
+  }
+
+  opportunities.sort((a, b) => asNumber(b.score, -999) - asNumber(a.score, -999));
+  state.pairOpportunities = opportunities.slice(0, 10);
+  state.lastPairAnalysis = opportunities[0] || null;
+
+  if (!valid.length) {
+    state.lastMessage = "No pair signal: no valid universe candidate";
+    if (config.allowTrendFallbackWhenNoPair) {
+      return maybeOpenTrendTrade(state, config, history, nowTs, "trend-fallback");
+    }
+    return false;
+  }
+
+  valid.sort((a, b) => b.score - a.score);
+  const selected = valid[0];
+  const basePrice = asNumber(state.symbolPrices && state.symbolPrices[selected.analysis.baseSymbol], NaN);
+  const quotePrice = asNumber(state.symbolPrices && state.symbolPrices[selected.analysis.quoteSymbol], NaN);
+  if (Number.isFinite(basePrice)) state.basePrice = basePrice;
+  if (Number.isFinite(quotePrice)) state.quotePrice = quotePrice;
+  state.lastPairAnalysis = selected.analysis;
+  state.lastPairMeta = {
+    probability: selected.meta.probability,
+    expectedValue: selected.meta.expectedValue,
+    rejectedReason: null
+  };
+  const setup = appendPairSetupLog(state, config, selected.setup);
+  const opened = openPairPosition(state, config, selected.analysis, selected.analysis.signal.type, nowTs, setup);
+  if (!opened) {
+    updatePairSetupLogLabel(state, setup.id, { accepted: false, rejectReason: "entry-not-opened" });
+  }
+  return opened;
+}
+
 function maybeOpenPairTrade(state, config, history, nowTs) {
   if (state.cycleCount - asNumber(state.lastTradeCycle, -999999) <= asNumber(config.pairCooldownCycles)) return false;
+  if (config.pairUniverseEnabled) return maybeOpenPairUniverseTrade(state, config, history, nowTs);
   state.pairRecentStats = pairRecentTradeStats(history, config);
   const analysis = analyzePairMarket(state.pairSeries, config);
   state.lastPairAnalysis = analysis;
+  state.pairOpportunities = [pairOpportunitySummary(withPairContext(analysis, config.baseSymbol, config.quoteSymbol), null)];
   if (!analysis.signal) {
     incrementReject(state, analysis.rejectedReason);
     if (analysis.rejectedReason !== "zscore-below-entry") state.pendingPairSignal = null;
@@ -1836,6 +2237,25 @@ function normalizeBacktestPoint(point, index, config) {
   }
 
   if (config.strategyMode === "pairs") {
+    if (config.pairUniverseEnabled && point.prices && typeof point.prices === "object") {
+      const prices = Object.fromEntries(Object.entries(point.prices).map(([symbol, price]) => [normalizeSymbol(symbol), asNumber(price)]));
+      const firstPair = config.pairUniverse[0] || [config.baseSymbol, config.quoteSymbol];
+      const baseSymbol = config.baseSymbol || firstPair[0];
+      const quoteSymbol = config.quoteSymbol || firstPair[1];
+      return {
+        price: asNumber(prices[config.symbol], prices[baseSymbol]),
+        basePrice: asNumber(prices[baseSymbol]),
+        quotePrice: asNumber(prices[quoteSymbol]),
+        prices,
+        fundingRate: 0,
+        fundingRateBase: 0,
+        fundingRateQuote: 0,
+        nextFundingTs: null,
+        nextFundingTsBase: null,
+        nextFundingTsQuote: null,
+        ts: point.ts == null ? defaultTs : asNumber(point.ts, defaultTs)
+      };
+    }
     return {
       price: asNumber(point.basePrice ?? point.base ?? point.price ?? point.p),
       basePrice: asNumber(point.basePrice ?? point.base),
@@ -1894,7 +2314,9 @@ function runBacktest({ series = [], config: configOverrides = {}, closeOpenPosit
   for (let i = 0; i < series.length; i += 1) {
     const point = normalizeBacktestPoint(series[i], i, config);
     if (config.strategyMode === "pairs") {
-      if (!Number.isFinite(point.basePrice) || !Number.isFinite(point.quotePrice) || point.basePrice <= 0 || point.quotePrice <= 0) continue;
+      if (config.pairUniverseEnabled) {
+        if (!point.prices || typeof point.prices !== "object") continue;
+      } else if (!Number.isFinite(point.basePrice) || !Number.isFinite(point.quotePrice) || point.basePrice <= 0 || point.quotePrice <= 0) continue;
     } else if (!Number.isFinite(point.price) || point.price <= 0) continue;
 
     state.cycleCount += 1;
@@ -1908,10 +2330,16 @@ function runBacktest({ series = [], config: configOverrides = {}, closeOpenPosit
     state.fundingRateQuote = point.fundingRateQuote == null ? null : point.fundingRateQuote;
     state.nextFundingTsBase = point.nextFundingTsBase == null ? point.nextFundingTs : point.nextFundingTsBase;
     state.nextFundingTsQuote = point.nextFundingTsQuote == null ? null : point.nextFundingTsQuote;
+    state.symbolPrices = point.prices || {
+      [config.symbol]: point.price,
+      [config.baseSymbol]: point.basePrice,
+      [config.quoteSymbol]: point.quotePrice
+    };
 
     appendPricePoint(state, config, point.price, point.ts);
     if (config.strategyMode === "pairs") {
       appendPairPoint(state, config, point.basePrice, point.quotePrice, point.ts);
+      if (config.pairUniverseEnabled) appendPairUniversePoints(state, config, state.symbolPrices, point.ts);
     }
     updateMlSignal(state, config, point.ts);
     applyFundingAccrual(state, config, point.ts);
@@ -2026,6 +2454,10 @@ function summarizeRuntime(config, state, history) {
       nextFundingTsBase: state.nextFundingTsBase,
       nextFundingTsQuote: state.nextFundingTsQuote,
       cycleCount: state.cycleCount,
+      riskMode: state.riskMode || "normal",
+      effectiveRiskPerTradePct: effectiveRiskPerTradePct(config, state),
+      effectivePairRiskPerTradePct: effectivePairRiskPerTradePct(config, state),
+      lossCooldownUntilCycle: state.lossCooldownUntilCycle,
       lastTickAt: state.lastTickAt,
       lastMessage: state.lastMessage,
       position: state.position,
@@ -2042,6 +2474,12 @@ function summarizeRuntime(config, state, history) {
         pendingPairSignal: state.pendingPairSignal || null
       } : null,
       pendingPairSignal: state.pendingPairSignal || null,
+      pairOpportunities: Array.isArray(state.pairOpportunities) ? state.pairOpportunities.slice(0, 10) : [],
+      pairUniverseStatus: {
+        enabled: Boolean(config.pairUniverseEnabled),
+        size: Array.isArray(config.pairUniverse) ? config.pairUniverse.length : 0,
+        symbols: config.pairUniverseEnabled ? uniqueUniverseSymbols(config) : [config.baseSymbol, config.quoteSymbol]
+      },
       pairRecentStats: state.pairRecentStats || null,
       rejectedSignals: state.rejectedSignals,
       mlSignal: state.mlSignal,
@@ -2083,9 +2521,15 @@ async function runTradingCycle({ firestore, collectionPath = DEFAULT_COLLECTION,
   state.nextFundingTs = market.nextFundingTs;
   state.nextFundingTsBase = market.nextFundingTsBase == null ? market.nextFundingTs : market.nextFundingTsBase;
   state.nextFundingTsQuote = market.nextFundingTsQuote == null ? null : market.nextFundingTsQuote;
+  state.symbolPrices = market.symbolPrices || {
+    [config.symbol]: market.price,
+    [config.baseSymbol]: market.basePrice == null ? market.price : market.basePrice,
+    [config.quoteSymbol]: market.quotePrice
+  };
   appendPricePoint(state, config, market.price, nowTs);
   if (config.strategyMode === "pairs") {
     appendPairPoint(state, config, market.basePrice, market.quotePrice, nowTs);
+    if (config.pairUniverseEnabled) appendPairUniversePoints(state, config, state.symbolPrices, nowTs);
   }
   updateMlSignal(state, config, nowTs);
   applyFundingAccrual(state, config, nowTs);
